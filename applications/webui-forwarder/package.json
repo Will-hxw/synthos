@@ -3,6 +3,7 @@
     "version": "1.0.0",
     "description": "WebUI前后端接口转发服务，用于暴露到公网",
     "main": "index.js",
+    "type": "module",
     "scripts": {
         "build": "tsc --build",
         "dev": "node ../../scripts/devRunner.cjs --name webui-forwarder --entry dist/index.js --watch src",
