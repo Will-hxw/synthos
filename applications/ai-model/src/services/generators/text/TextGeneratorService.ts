@@ -192,6 +192,42 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
+     * 剥离完整包裹 JSON 内容的 markdown 代码围栏
+     * @param content 模型返回内容
+     * @returns 去除围栏后的 JSON 字符串
+     */
+    private _stripJsonCodeFence(content: string): string {
+        const trimmedContent = content.trim();
+
+        if (!trimmedContent.startsWith("```") || !trimmedContent.endsWith("```")) {
+            return trimmedContent;
+        }
+
+        const normalizedContent = trimmedContent.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+        const lines = normalizedContent.split("\n");
+
+        if (lines.length < 2) {
+            return trimmedContent;
+        }
+
+        const openingFence = lines[0].trim().toLowerCase();
+        const closingFence = lines[lines.length - 1].trim();
+
+        if (openingFence !== "```json" && openingFence !== "```") {
+            return trimmedContent;
+        }
+
+        if (closingFence !== "```") {
+            return trimmedContent;
+        }
+
+        return lines
+            .slice(1, lines.length - 1)
+            .join("\n")
+            .trim();
+    }
+
+    /**
      * 无状态的、带重试机制的、带候选机制的文本生成方法
      * @param modelNames 模型候选列表，允许为空。如果为空，则只使用置顶的的模型候选列表
      * @param input 输入文本
@@ -221,6 +257,7 @@ export class TextGeneratorService extends Disposable {
                 if (resultStr) {
                     // 尝试parseJson，如果不符合json格式，会直接抛错
                     if (checkJsonFormat) {
+                        resultStr = this._stripJsonCodeFence(resultStr);
                         JSON.parse(resultStr);
                     }
                     selectedModelName = modelName;

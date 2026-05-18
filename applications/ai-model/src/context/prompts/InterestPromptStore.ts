@@ -16,10 +16,10 @@ export class InterestPromptStore {
      */
     @useMiddleware(CTX_MIDDLEWARE_TOKENS.INJECT_TIME)
     @useMiddleware(CTX_MIDDLEWARE_TOKENS.ADD_BACKGROUND_KNOWLEDGE)
-    public static getLLMInterestEvaluationPrompt(
+    public static async getLLMInterestEvaluationPrompt(
         userInterestDescriptions: string[],
         topics: Array<{ topic: string; detail: string }>
-    ): CtxTemplateNode {
+    ): Promise<CtxTemplateNode> {
         const root = new CtxTemplateNode();
 
         const userInterestsList = userInterestDescriptions.map(desc => `${desc}`);

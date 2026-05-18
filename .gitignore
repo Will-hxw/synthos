@@ -24,7 +24,11 @@ pnpm-debug.log*
 # TypeScript build info
 *.tsbuildinfo 
 
+# Local runtime config and data
 synthos_config.json
+synthos_config_override.json
+data/
+applications/*/data/
 
 # Docker (Scheme B)
 docker/volumes
@@ -32,6 +36,6 @@ docker/data
 docker/logs
 docker/config/synthos_config_override.json
 
-logs
-
+logs/
+.claude/
 pids.json

@@ -282,7 +282,7 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
             detail: t.detail
         }));
 
-        const promptNode = InterestPromptStore.getLLMInterestEvaluationPrompt(
+        const promptNode = await InterestPromptStore.getLLMInterestEvaluationPrompt(
             userInterestDescriptions,
             topicsForPrompt
         );

@@ -19,7 +19,7 @@ function getAiModelWsUrl() {
     }
 
     // Default: same-origin WebSocket.
-    // - Dev (Vite): wss://<host>:5173/trpc, then Vite proxies to http://localhost:3002
+    // - Dev (Vite): wss://<host>:3011/trpc, then Vite proxies to http://localhost:3002
     // - Docker (nginx): wss://<host>/trpc, then nginx proxies to http://webui-backend:3002
     // - Direct backend access: ws://localhost:3002/trpc also works when you open UI from that origin
     return `${protocol}//${window.location.host}/trpc`;

@@ -25,7 +25,7 @@ export class NgrokClient extends Disposable {
             this.urlForFE = await ngrok.connect({
                 authtoken: config.webUI_Forwarder.authTokenForFE,
                 proto: "http",
-                addr: 5173 // TODO : Make this configurable
+                addr: 3011 // TODO : Make this configurable
             });
             this.LOGGER.success(`Ngrok客户端（前端）初始化成功, urlForFE: ${this.urlForFE}`);
         } catch (e) {

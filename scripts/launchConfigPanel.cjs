@@ -22,7 +22,7 @@ function startBackend() {
 
         const projectPath = path.join(rootDir, "applications", "webui-backend");
 
-        const backendProcess = spawn("npm", ["run", "dev:config-panel"], {
+        const backendProcess = spawn("pnpm", ["run", "dev:config-panel"], {
             cwd: projectPath,
             stdio: ["ignore", "inherit", "inherit"],
             shell: true,
@@ -57,7 +57,7 @@ function startFrontend() {
 
         const projectPath = path.join(rootDir, "applications", "webui-frontend");
 
-        const frontendProcess = spawn("npm", ["run", "dev"], {
+        const frontendProcess = spawn("pnpm", ["run", "dev"], {
             cwd: projectPath,
             stdio: ["ignore", "inherit", "inherit"],
             shell: true,
@@ -107,7 +107,7 @@ async function launchConfigPanel() {
 
         console.log("\n✅ 配置面板启动完成！");
         console.log("📝 后端地址: http://localhost:3002");
-        console.log("🌐 前端地址: http://localhost:5173 (Vite 默认端口)");
+        console.log("🌐 前端地址: http://localhost:3011");
         console.log("");
         console.log("💡 提示: 修改配置后需要手动重启相关服务才能生效");
     } catch (error) {

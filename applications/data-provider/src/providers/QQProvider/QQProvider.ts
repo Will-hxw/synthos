@@ -66,7 +66,6 @@ export class QQProvider extends Disposable implements IIMProvider {
         this.db = this._registerDisposable(db);
 
         // 加密相关配置
-        this.LOGGER.info(`当前的dbKey: ${config.dbKey}`);
         await db.exec(`
             PRAGMA key = '${config.dbKey}';
             PRAGMA cipher_page_size = 4096;
@@ -95,7 +94,7 @@ export class QQProvider extends Disposable implements IIMProvider {
      */
     private async _getPatchSQL() {
         const qqConfig = (await this.configManagerService.getCurrentConfig()).dataProviders.QQ;
-        const patchSQL = qqConfig.dbPatch.enabled ? `(${qqConfig.dbPatch.patchSQL})` : "";
+        const patchSQL = qqConfig.dbPatch.enabled ? `(${qqConfig.dbPatch.patchSQL})` : "1 = 1";
 
         return patchSQL;
     }
@@ -168,6 +167,7 @@ export class QQProvider extends Disposable implements IIMProvider {
                     CAST("${GMC.msgId}" AS TEXT) AS "${GMC.msgId}",
                     "${GMC.msgTime}",
                     "${GMC.groupUin}",
+                    "${GMC.peeruin}",
                     "${GMC.senderUin}",
                     "${GMC.replyMsgSeq}",
                     "${GMC.msgContent}",
@@ -178,7 +178,7 @@ export class QQProvider extends Disposable implements IIMProvider {
                 FROM group_msg_table 
                 WHERE ${await this._getPatchSQL()} 
                 AND ("${GMC.msgTime}" BETWEEN ${timeStart} AND ${timeEnd})
-                ${groupId ? `AND "${GMC.groupUin}" = ${groupId}` : ""}
+                ${groupId ? `AND "${GMC.peeruin}" = ${groupId}` : ""}
             `;
 
             this.LOGGER.debug(`执行的SQL: ${sql}`);
@@ -188,13 +188,14 @@ export class QQProvider extends Disposable implements IIMProvider {
 
             // 解析查询到的全部消息内容
             const messages: RawChatMessage[] = [];
+            let skippedInvalidProtobufCount = 0;
 
             for (const result of results) {
                 // 生成消息对象
                 const processedMsg: RawChatMessage = {
                     msgId: String(result[GMC.msgId]),
                     messageContent: "",
-                    groupId: String(result[GMC.groupUin]),
+                    groupId: String(result[GMC.groupUin] || result[GMC.peeruin]),
                     timestamp: result[GMC.msgTime] * 1000, // 转换为毫秒级时间戳
                     senderId: String(result[GMC.senderUin]),
                     senderGroupNickname: result[GMC.sendMemberName],
@@ -245,9 +246,18 @@ export class QQProvider extends Disposable implements IIMProvider {
                 }
 
                 // 获取消息正文：解析40800中的所有element（或者叫做fragment）
-                processedMsg.messageContent = await this._parseMessageContent(
-                    this.messagePBParser.parseMessageSegment(result[GMC.msgContent]).messages
-                );
+                try {
+                    processedMsg.messageContent = await this._parseMessageContent(
+                        this.messagePBParser.parseMessageSegment(result[GMC.msgContent]).messages
+                    );
+                } catch (error) {
+                    if (error === ErrorReasons.PROTOBUF_ERROR) {
+                        skippedInvalidProtobufCount++;
+                        continue;
+                    }
+
+                    throw error;
+                }
                 if (processedMsg.messageContent === "") {
                     this.LOGGER.debug(
                         `msgId: ${result[GMC.msgId]}的消息内容为空，忽略该消息。
@@ -257,6 +267,9 @@ export class QQProvider extends Disposable implements IIMProvider {
                     messages.push(processedMsg);
                 }
             }
+            if (skippedInvalidProtobufCount > 0) {
+                this.LOGGER.warning(`跳过 ${skippedInvalidProtobufCount} 条消息正文解析失败的消息。`);
+            }
 
             return messages;
         } else {
@@ -265,7 +278,7 @@ export class QQProvider extends Disposable implements IIMProvider {
     }
 
     /**
-     * 根据群号（40030）和消息序号（40003）获取消息
+     * 根据会话群号（40027）和消息序号（40003）获取消息
      * @returns 消息数组
      */
     private async _getMsgIdByGroupNumberAndMsgSeq(
@@ -278,7 +291,7 @@ export class QQProvider extends Disposable implements IIMProvider {
                          FROM group_msg_table 
                          WHERE ${await this._getPatchSQL()} 
                          AND "${GMC.msgSeq}" = ${msgSeq}
-                         AND "${GMC.groupUin}" = ${groupNumber}`;
+                         AND "${GMC.peeruin}" = ${groupNumber}`;
 
             this.LOGGER.debug(`执行的SQL: ${sql}`);
             const results = await this.db.all(sql);

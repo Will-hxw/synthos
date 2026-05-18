@@ -117,6 +117,11 @@ export class InterestScoreTaskHandler {
                         };
                     })
                 );
+                if (argArr.length === 0) {
+                    this.LOGGER.warning("未配置兴趣关键词，跳过当前任务");
+
+                    return;
+                }
 
                 // 构建所有话题详情文本
                 const topics = filteredDigestResults.map(

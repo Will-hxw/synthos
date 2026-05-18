@@ -8,6 +8,7 @@
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const { checkMongoReady } = require("./checkMongoReady.cjs");
 const { runPreStartCommand, stopPreStartCommand } = require("./preStartCommand.cjs");
 
 // 构建顺序配置（可按需调整）
@@ -52,7 +53,7 @@ function buildProject(projectName) {
         console.log(`📁 项目路径: ${path.join(rootDir, "applications", projectName)}`);
 
         const projectPath = path.join(rootDir, "applications", projectName);
-        const buildProcess = spawn("npm", ["run", "dev"], {
+        const buildProcess = spawn("pnpm", ["run", "dev"], {
             cwd: projectPath,
             stdio: ["ignore", "inherit", "inherit"], // [stdin, stdout, stderr] - inherit stdout and stderr
             shell: true
@@ -115,6 +116,8 @@ function delay(ms) {
 async function buildAllProjects() {
     console.log(`🏗️ 开始构建&运行所有项目，总共 ${buildOrder.length} 个`);
     console.log(`📋 构建顺序: ${buildOrder.join(" → ")}`);
+
+    await checkMongoReady();
 
     // 启动全部子项目之前，先执行启动前命令（独立子进程执行，不等待其完成）
     await runPreStartCommand(rootDir);

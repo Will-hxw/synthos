@@ -2,6 +2,7 @@
 
 const path = require("path");
 const { spawn } = require("child_process");
+const { checkMongoReady } = require("./checkMongoReady.cjs");
 const { runPreStartCommand, stopPreStartCommand } = require("./preStartCommand.cjs");
 
 function parseArgs(argv) {
@@ -47,8 +48,8 @@ function buildConcurrentlyArgs(group) {
         return {
             names: "backend,frontend",
             commands: [
-                "pnpm --filter webui-backend dev:config-panel",
-                "pnpm --filter vite-template dev"
+                "node scripts/runWithEnv.cjs CONFIG_PANEL_MODE=true CONFIG_PANEL_PORT=3002 -- pnpm --filter webui-backend dev:config-panel",
+                "node scripts/runWithEnv.cjs VITE_CONFIG_PANEL_MODE=true -- pnpm --filter vite-template dev"
             ]
         };
     }
@@ -82,6 +83,10 @@ function buildConcurrentlyArgs(group) {
     throw new Error(`未知 group: ${group}`);
 }
 
+function shouldCheckMongoReady(group) {
+    return group === "all" || group === "backend" || group === "webui" || group === "forwarder";
+}
+
 async function main() {
     const args = parseArgs(process.argv);
     const group = args.group;
@@ -91,6 +96,10 @@ async function main() {
     }
 
     const rootDir = path.resolve(__dirname, "..");
+
+    if (shouldCheckMongoReady(group)) {
+        await checkMongoReady();
+    }
 
     // 1) 启动前命令（不等待其执行完成）
     await runPreStartCommand(rootDir);

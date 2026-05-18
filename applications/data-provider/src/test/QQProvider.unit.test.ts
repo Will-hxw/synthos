@@ -1,13 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, vi, Mock } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import ErrorReasons from "@root/common/contracts/ErrorReasons";
 
-import { MsgElementType } from "../providers/QQProvider/@types/mappers/MsgElementType";
 import { GroupMsgColumn as GMC } from "../providers/QQProvider/@types/mappers/GroupMsgColumn";
+import { MsgElementType } from "../providers/QQProvider/@types/mappers/MsgElementType";
 import { MsgType } from "../providers/QQProvider/@types/mappers/MsgType";
 
-// ==================== Mock 区域 ====================
-
 // 使用 vi.hoisted 来创建可以在 mock 中引用的变量
-const { mockConfig, mockDbMethods, mockParserMethods, mockLogger } = vi.hoisted(() => ({
+const { mockConfig, mockConfigManager, mockDbMethods, mockParserMethods, mockLogger } = vi.hoisted(() => ({
     mockConfig: {
         dataProviders: {
             QQ: {
@@ -20,6 +19,9 @@ const { mockConfig, mockDbMethods, mockParserMethods, mockLogger } = vi.hoisted(
                 }
             }
         }
+    },
+    mockConfigManager: {
+        getCurrentConfig: vi.fn()
     },
     mockDbMethods: {
         open: vi.fn().mockResolvedValue(undefined),
@@ -54,11 +56,20 @@ vi.mock("@root/common/util/Logger", () => ({
     }
 }));
 
+// Mock ASSERT，避免断言失败时给测试 worker 发送 SIGINT
+vi.mock("@root/common/util/ASSERT", () => ({
+    ASSERT: (condition: unknown, message?: string) => {
+        if (!condition) {
+            throw new Error("断言失败！" + (message ? message : ""));
+        }
+    },
+    ASSERT_NOT_FATAL: vi.fn()
+}));
+
 // Mock ConfigManagerService
 vi.mock("@root/common/services/config/ConfigManagerService", () => ({
-    default: {
-        getCurrentConfig: vi.fn().mockResolvedValue(mockConfig)
-    }
+    ConfigManagerService: class MockConfigManagerService {},
+    default: mockConfigManager
 }));
 
 // Mock PromisifiedSQLite - 需要返回一个类
@@ -111,23 +122,24 @@ vi.mock("@root/common/util/lifecycle/Disposable", () => ({
     }
 }));
 
-// 在所有 mock 之后导入被测试的模块
-// eslint-disable-next-line import/order
-import { registerConfigManagerService } from "@root/common/di/container";
-import { QQProvider } from "../providers/QQProvider/QQProvider";
-import { registerQQProvider, getQQProvider } from "../di/container";
+type QQProvider = import("../providers/QQProvider/QQProvider").QQProvider;
 
-// 初始化 DI 容器
-registerConfigManagerService();
-registerQQProvider();
+let QQProviderClass: new (...args: any[]) => QQProvider;
 
 // ==================== 测试用例 ====================
 
 describe("QQProvider", () => {
     let qqProvider: QQProvider;
 
+    beforeAll(async () => {
+        QQProviderClass = (await import("../providers/QQProvider/QQProvider")).QQProvider as unknown as new (
+            ...args: any[]
+        ) => QQProvider;
+    });
+
     beforeEach(async () => {
         vi.clearAllMocks();
+        mockConfigManager.getCurrentConfig.mockResolvedValue(mockConfig);
 
         // 设置默认的 prepare mock 返回值（用于 init 中的表数量查询）
         mockDbMethods.prepare.mockResolvedValue({
@@ -135,8 +147,7 @@ describe("QQProvider", () => {
             finalize: vi.fn().mockResolvedValue(undefined)
         });
 
-        // 从 DI 容器获取 QQProvider 实例
-        qqProvider = getQQProvider();
+        qqProvider = new QQProviderClass(mockConfigManager as any);
     });
 
     afterEach(async () => {
@@ -145,7 +156,7 @@ describe("QQProvider", () => {
 
     describe("初始化相关", () => {
         it("未初始化时调用方法应抛出 UNINITIALIZED_ERROR", async () => {
-            const uninitializedProvider = getQQProvider();
+            const uninitializedProvider = new QQProviderClass(mockConfigManager as any);
 
             // 由于 db 为 null，调用 getMsgByTimeRange 会抛出 UNINITIALIZED_ERROR
             await expect(uninitializedProvider.getMsgByTimeRange(0, 1000)).rejects.toBe("UNINITIALIZED_ERROR");
@@ -189,6 +200,7 @@ describe("QQProvider", () => {
             [GMC.msgId]: mockMsgId,
             [GMC.msgTime]: Math.floor(mockTimestamp / 1000),
             [GMC.groupUin]: mockGroupId,
+            [GMC.peeruin]: mockGroupId,
             [GMC.senderUin]: mockSenderId,
             [GMC.replyMsgSeq]: null,
             [GMC.msgContent]: Buffer.from("mock content"),
@@ -230,6 +242,17 @@ describe("QQProvider", () => {
                 senderNickname: "测试昵称"
             });
             expect(result[0].timestamp).toBe(Math.floor(mockTimestamp / 1000) * 1000);
+        });
+
+        it("禁用数据库补丁时 SQL 应包含恒真条件", async () => {
+            mockDbMethods.all.mockResolvedValue([]);
+
+            await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
+
+            expect(sqlCall).toContain("WHERE 1 = 1");
+            expect(sqlCall).toContain('AND ("40050" BETWEEN');
         });
 
         it("应正确处理表情消息", async () => {
@@ -354,6 +377,20 @@ describe("QQProvider", () => {
             expect(result).toHaveLength(0);
         });
 
+        it("消息正文 protobuf 解析失败时应跳过该消息", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockImplementation(() => {
+                throw ErrorReasons.PROTOBUF_ERROR;
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(0);
+            expect(mockLogger.warning).toHaveBeenCalledWith("跳过 1 条消息正文解析失败的消息。");
+        });
+
         it("指定群号时应在 SQL 中包含群号条件", async () => {
             mockDbMethods.all.mockResolvedValue([]);
             mockParserMethods.parseMessageSegment.mockReturnValue({ messages: [] });
@@ -362,7 +399,30 @@ describe("QQProvider", () => {
 
             const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
 
-            expect(sqlCall).toContain(`"${GMC.groupUin}" = ${mockGroupId}`);
+            expect(sqlCall).toContain(`"${GMC.peeruin}" = ${mockGroupId}`);
+        });
+
+        it("groupUin 为空时应使用 peeruin 作为群号", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.groupUin]: 0,
+                [GMC.peeruin]: mockGroupId
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.TEXT,
+                        messageText: "你好，世界！"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].groupId).toBe(mockGroupId);
         });
 
         it("应正确处理空结果", async () => {
@@ -402,8 +462,9 @@ describe("QQProvider", () => {
                 [GMC.msgId]: "2222222222222222222",
                 [GMC.msgTime]: Math.floor(mockTimestamp / 1000),
                 [GMC.groupUin]: mockGroupId,
+                [GMC.peeruin]: mockGroupId,
                 [GMC.senderUin]: "987654321",
-                [GMC.replyMsgSeq]: null,
+                [GMC.replyMsgSeq]: 123,
                 [GMC.msgContent]: Buffer.from("mock"),
                 [GMC.msgType]: MsgType.REPLY,
                 [GMC.extraData]: Buffer.from("mock extra data"),
@@ -454,6 +515,7 @@ describe("QQProvider", () => {
                 [GMC.msgId]: "2222222222222222222",
                 [GMC.msgTime]: Math.floor(mockTimestamp / 1000),
                 [GMC.groupUin]: mockGroupId,
+                [GMC.peeruin]: mockGroupId,
                 [GMC.senderUin]: "987654321",
                 [GMC.replyMsgSeq]: null,
                 [GMC.msgContent]: Buffer.from("mock_content"),
@@ -485,8 +547,6 @@ describe("QQProvider", () => {
 
     describe("数据库补丁配置", () => {
         it("启用数据库补丁时应在 SQL 中包含补丁语句", async () => {
-            // 重新 mock 配置以启用补丁
-            const ConfigManagerService = await import("@root/common/services/config/ConfigManagerService");
             const configWithPatch = {
                 dataProviders: {
                     QQ: {
@@ -499,10 +559,8 @@ describe("QQProvider", () => {
                 }
             };
 
-            (ConfigManagerService.default.getCurrentConfig as Mock).mockResolvedValue(configWithPatch);
-
-            // 从 DI 容器获取新实例使用新配置
-            const providerWithPatch = getQQProvider();
+            mockConfigManager.getCurrentConfig.mockResolvedValue(configWithPatch);
+            const providerWithPatch = new QQProviderClass(mockConfigManager as any);
 
             await providerWithPatch.init();
 

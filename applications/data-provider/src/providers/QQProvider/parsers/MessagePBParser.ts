@@ -114,14 +114,6 @@ export class MessagePBParser extends Disposable {
             throw ErrorReasons.UNINITIALIZED_ERROR;
         }
 
-        const errMsg = this.messageSegment.verify(buffer);
-
-        if (errMsg) {
-            this.LOGGER.error("Protobuf verify error:" + errMsg);
-            console.dir;
-            throw ErrorReasons.PROTOBUF_ERROR;
-        }
-
         try {
             const message = this.messageSegment.decode(buffer);
             const plain = this.messageSegment.toObject(message, {
@@ -135,7 +127,7 @@ export class MessagePBParser extends Disposable {
 
             return plain as RawMsgContentParseResult;
         } catch (error) {
-            this.LOGGER.error("Protobuf decode error:" + error);
+            this.LOGGER.debug("Protobuf decode error:" + error);
             throw ErrorReasons.PROTOBUF_ERROR;
         }
     }

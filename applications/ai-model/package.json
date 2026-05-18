@@ -19,7 +19,7 @@
     "@langchain/langgraph-checkpoint-sqlite": "^1.0.0",
     "@langchain/openai": "^1.2.3",
     "axios": "^1.12.2",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.10.0",
     "langchain": "^1.2.13",
     "protobufjs": "^7.5.4",
     "sqlite-vec": "^0.1.6",

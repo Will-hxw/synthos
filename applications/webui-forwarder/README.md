@@ -41,5 +41,5 @@ pnpm run dev
 
 ## 依赖说明
 
-- 依赖 webui-backend 和 webui-foreground 服务先启动
+- 依赖 webui-backend 和 webui-frontend 服务先启动
 - 通过 ngrok 创建安全隧道
