@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Pipeline 调度器 - 按顺序串联执行各个数据处理任务",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "build": "tsc --build",
     "dev": "node ../../scripts/devRunner.cjs --name orchestrator --entry dist/index.js --watch src",

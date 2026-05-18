@@ -3,6 +3,7 @@
     "version": "1.0.0",
     "description": "WebUI后端接口服务",
     "main": "index.js",
+    "type": "module",
     "scripts": {
         "build": "tsc --build",
         "dev": "node ../../scripts/devRunner.cjs --name webui-backend --entry dist/index.js --watch src --kill-port 3002",
