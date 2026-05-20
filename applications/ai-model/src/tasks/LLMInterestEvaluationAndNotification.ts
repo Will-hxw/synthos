@@ -171,10 +171,10 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
 
                     // 5. 发送邮件通知
                     if (unnotifiedTopics.length > 0) {
-                        const emailSuccess =
+                        const emailSendResult =
                             await this.interestEmailService.sendInterestTopicsEmail(unnotifiedTopics);
 
-                        if (emailSuccess) {
+                        if (emailSendResult === "sent") {
                             this.LOGGER.success("邮件通知发送成功");
 
                             // 标记这些话题已发送邮件
@@ -188,8 +188,10 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
                                     throw error;
                                 }
                             }
-                        } else {
+                        } else if (emailSendResult === "failed") {
                             this.LOGGER.warning("邮件通知发送失败");
+                        } else {
+                            this.LOGGER.info("邮件通知已跳过");
                         }
                     }
 

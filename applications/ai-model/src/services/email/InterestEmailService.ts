@@ -10,6 +10,8 @@ import { EmailService } from "@root/common/services/email/EmailService";
 import { AIDigestResult } from "@root/common/contracts/ai-model";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
 
+export type InterestEmailSendResult = "sent" | "skipped" | "failed";
+
 /**
  * 兴趣话题邮件服务
  * 处理感兴趣话题提醒邮件的构建和发送逻辑
@@ -42,22 +44,22 @@ class InterestEmailService {
     /**
      * 发送感兴趣话题提醒邮件
      * @param interestedTopics 感兴趣的话题列表
-     * @returns 是否发送成功
+     * @returns 邮件发送结果
      */
-    public async sendInterestTopicsEmail(interestedTopics: AIDigestResult[]): Promise<boolean> {
+    public async sendInterestTopicsEmail(interestedTopics: AIDigestResult[]): Promise<InterestEmailSendResult> {
         const config = await this.configManagerService.getCurrentConfig();
 
         // 检查邮件功能是否启用
         if (!config.email.enabled) {
             this.LOGGER.info("邮件功能未启用，跳过发送感兴趣话题提醒邮件");
 
-            return false;
+            return "skipped";
         }
 
         if (interestedTopics.length === 0) {
             this.LOGGER.info("没有感兴趣的话题，无需发送邮件");
 
-            return false;
+            return "skipped";
         }
 
         // 构建邮件标题
@@ -75,7 +77,7 @@ class InterestEmailService {
             this.LOGGER.error(`感兴趣话题提醒邮件发送失败: ${subject}`);
         }
 
-        return success;
+        return success ? "sent" : "failed";
     }
 
     /**

@@ -187,6 +187,7 @@ export async function scheduleAndWaitForJob<T extends TaskHandlerTypes>(
     timeoutMs: number
 ): Promise<boolean> {
     LOGGER.info(`调度任务 [${taskName}]`);
+    await agendaInstance.ready;
 
     // 调度任务
     const job = await agendaInstance.now(taskName, data);
@@ -210,6 +211,8 @@ export async function scheduleAndWaitForJob<T extends TaskHandlerTypes>(
  * @param taskNames - 可选，指定要清理的任务名称列表；不传则清理所有任务
  */
 export async function cleanupStaleJobs(taskNames?: TaskHandlerTypes[]): Promise<void> {
+    await agendaInstance.ready;
+
     await retryAsync(
         async () => {
             LOGGER.info("🧹 开始清理启动前残留的任务...");

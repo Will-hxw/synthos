@@ -189,6 +189,8 @@ export class QQProvider extends Disposable implements IIMProvider {
             // 解析查询到的全部消息内容
             const messages: RawChatMessage[] = [];
             let skippedInvalidProtobufCount = 0;
+            let skippedEmptyQuotedContentCount = 0;
+            let skippedInvalidQuotedProtobufCount = 0;
 
             for (const result of results) {
                 // 生成消息对象
@@ -212,33 +214,15 @@ export class QQProvider extends Disposable implements IIMProvider {
                         );
 
                         if (!quotedMsgContent) {
-                            this.LOGGER.warning(
-                                `msgId: ${result[GMC.msgId]}的引用消息内容为空。放弃获取该条消息的引用。
-                                发送者: ${result[GMC.sendMemberName ?? result[GMC.sendNickName]]}`
-                            );
+                            skippedEmptyQuotedContentCount++;
                             throw ErrorReasons.EMPTY_VALUE_ERROR;
                         }
                         processedMsg.quotedMsgContent = quotedMsgContent;
                     } catch (error) {
                         if (error === ErrorReasons.EMPTY_VALUE_ERROR || error === ErrorReasons.PROTOBUF_ERROR) {
-                            // ⚠️⚠️⚠️实验发现如果消息的消息正文为空，那么大概率其id也是找不到的，所以这里直接忽略该条消息，下面代码不执行了
-                            // // 引用消息内容为空或者protobuf解析出错，尝试获取其id
-                            // this.LOGGER.warning(
-                            //     `msgId: ${result[GMC.msgId]}的引用消息内容为空或者protobuf解析出错，尝试获取其id。
-                            // 发送者: ${result[GMC.sendMemberName ?? result[GMC.sendNickName]]}`
-                            // );
-                            // // 获取引用的消息 quotedMsgId
-                            // let quotedMsgId: string | undefined = undefined;
-                            // quotedMsgId = await this._getMsgIdByGroupNumberAndMsgSeq(
-                            //     result[GMC.groupUin],
-                            //     result[GMC.replyMsgSeq]
-                            // );
-                            // if (!quotedMsgId) {
-                            //     this.LOGGER.warning(
-                            //         `无法找到被引用的消息的msgId。本条消息的msgId: ${result[GMC.msgId]}`
-                            //     );
-                            // }
-                            // processedMsg.quotedMsgId = quotedMsgId;
+                            if (error === ErrorReasons.PROTOBUF_ERROR) {
+                                skippedInvalidQuotedProtobufCount++;
+                            }
                         } else {
                             throw error;
                         }
@@ -261,11 +245,17 @@ export class QQProvider extends Disposable implements IIMProvider {
                 if (processedMsg.messageContent === "") {
                     this.LOGGER.debug(
                         `msgId: ${result[GMC.msgId]}的消息内容为空，忽略该消息。
-                        发送者: ${result[GMC.sendMemberName ?? result[GMC.sendNickName]]}`
+                        发送者: ${this._getSenderDisplayName(result)}`
                     );
                 } else {
                     messages.push(processedMsg);
                 }
+            }
+            if (skippedEmptyQuotedContentCount > 0) {
+                this.LOGGER.warning(`跳过 ${skippedEmptyQuotedContentCount} 条引用消息内容为空的消息引用。`);
+            }
+            if (skippedInvalidQuotedProtobufCount > 0) {
+                this.LOGGER.warning(`跳过 ${skippedInvalidQuotedProtobufCount} 条引用消息正文解析失败的消息引用。`);
             }
             if (skippedInvalidProtobufCount > 0) {
                 this.LOGGER.warning(`跳过 ${skippedInvalidProtobufCount} 条消息正文解析失败的消息。`);
@@ -338,5 +328,26 @@ export class QQProvider extends Disposable implements IIMProvider {
         } else {
             throw ErrorReasons.UNINITIALIZED_ERROR;
         }
+    }
+
+    /**
+     * 获取可用于诊断日志的发送者显示名。
+     * @param result QQNT 原始消息行
+     * @returns 优先群名片，其次昵称，最后空字符串
+     */
+    private _getSenderDisplayName(result: RawGroupMsgFromDB): string {
+        const groupNickname = result[GMC.sendMemberName];
+
+        if (typeof groupNickname === "string" && groupNickname.length > 0) {
+            return groupNickname;
+        }
+
+        const nickname = result[GMC.sendNickName];
+
+        if (typeof nickname === "string" && nickname.length > 0) {
+            return nickname;
+        }
+
+        return "";
     }
 }

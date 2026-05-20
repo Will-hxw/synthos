@@ -20,6 +20,10 @@ vi.mock("@root/common/util/Logger", () => ({
     }
 }));
 
+vi.mock("@root/common/util/promisify/sleep", () => ({
+    sleep: vi.fn().mockResolvedValue(undefined)
+}));
+
 describe("TextGeneratorService", () => {
     let service: TextGeneratorService;
     const mockConfigManagerService = {
@@ -58,6 +62,27 @@ describe("TextGeneratorService", () => {
         expect(result).toEqual({
             selectedModelName: "mock-model",
             content: fencedContent
+        });
+    });
+
+    it("JSON 校验失败时不应返回最后一次非法响应", async () => {
+        vi.spyOn(service as any, "doGenerateTextStream").mockResolvedValue("The request is not valid");
+
+        await expect(service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true)).rejects.toThrow(
+            "所有模型都生成摘要失败"
+        );
+    });
+
+    it("JSON 校验失败后应继续尝试下一个模型候选", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream.mockResolvedValueOnce("The request is not valid").mockResolvedValueOnce('{"ok":true}');
+
+        const result = await service.generateTextWithModelCandidates(["bad-model", "good-model"], "生成 JSON", true);
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: '{"ok":true}'
         });
     });
 });

@@ -253,13 +253,17 @@ export class TextGeneratorService extends Disposable {
 
         for (const modelName of modelCandidates) {
             try {
-                resultStr = await this.doGenerateTextStream(modelName, input);
-                if (resultStr) {
+                const generatedResultStr = await this.doGenerateTextStream(modelName, input);
+
+                if (generatedResultStr) {
+                    let validatedResultStr = generatedResultStr;
+
                     // 尝试parseJson，如果不符合json格式，会直接抛错
                     if (checkJsonFormat) {
-                        resultStr = this._stripJsonCodeFence(resultStr);
-                        JSON.parse(resultStr);
+                        validatedResultStr = this._stripJsonCodeFence(generatedResultStr);
+                        JSON.parse(validatedResultStr);
                     }
+                    resultStr = validatedResultStr;
                     selectedModelName = modelName;
                     break; // 如果成功，跳出循环
                 } else {

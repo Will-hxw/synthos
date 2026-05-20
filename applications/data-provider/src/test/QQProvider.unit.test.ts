@@ -391,6 +391,29 @@ describe("QQProvider", () => {
             expect(mockLogger.warning).toHaveBeenCalledWith("跳过 1 条消息正文解析失败的消息。");
         });
 
+        it("诊断日志中的发送者应在群名片为空时回退到昵称", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.sendMemberName]: "",
+                [GMC.sendNickName]: "测试昵称"
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: 999,
+                        messageText: ""
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(0);
+            expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining("发送者: 测试昵称"));
+        });
+
         it("指定群号时应在 SQL 中包含群号条件", async () => {
             mockDbMethods.all.mockResolvedValue([]);
             mockParserMethods.parseMessageSegment.mockReturnValue({ messages: [] });
@@ -505,6 +528,57 @@ describe("QQProvider", () => {
             expect(result).toHaveLength(1);
             expect(result[0].quotedMsgContent).toBe(quotedMsgContent);
             expect(result[0].messageContent).toBe("回复消息");
+        });
+
+        it("引用消息内容为空时应汇总 warning 且不输出逐条发送者信息", async () => {
+            const mockTimestamp = 1700000000000;
+            const mockGroupId = "123456789";
+
+            const mockRow = {
+                [GMC.msgId]: "2222222222222222222",
+                [GMC.msgTime]: Math.floor(mockTimestamp / 1000),
+                [GMC.groupUin]: mockGroupId,
+                [GMC.peeruin]: mockGroupId,
+                [GMC.senderUin]: "987654321",
+                [GMC.replyMsgSeq]: 123,
+                [GMC.msgContent]: Buffer.from("mock"),
+                [GMC.msgType]: MsgType.REPLY,
+                [GMC.extraData]: Buffer.from("mock extra data"),
+                [GMC.sendMemberName]: "测试用户",
+                [GMC.sendNickName]: "测试昵称"
+            };
+
+            mockDbMethods.all.mockResolvedValueOnce([mockRow]);
+            mockParserMethods.parseMessageSegment
+                .mockReturnValueOnce({
+                    extraMessage: {
+                        messages: [
+                            {
+                                messageId: "quoted_elem_1",
+                                elementType: 999,
+                                messageText: ""
+                            }
+                        ]
+                    },
+                    messages: []
+                })
+                .mockReturnValueOnce({
+                    messages: [
+                        {
+                            messageId: "elem_1",
+                            elementType: MsgElementType.TEXT,
+                            messageText: "回复消息"
+                        }
+                    ]
+                });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].quotedMsgContent).toBeUndefined();
+            expect(result[0].messageContent).toBe("回复消息");
+            expect(mockLogger.warning).toHaveBeenCalledWith("跳过 1 条引用消息内容为空的消息引用。");
+            expect(mockLogger.warning).not.toHaveBeenCalledWith(expect.stringContaining("msgId:"));
         });
 
         it("非引用消息时 quotedMsgContent 应为 undefined", async () => {

@@ -69,7 +69,7 @@ class OrchestratorApplication {
                 const POLL_INTERVAL = 5000; // 5秒
 
                 // ==================== 步骤 1: ProvideData ====================
-                LOGGER.info("📥 [1/5] 开始执行 ProvideData 任务...");
+                LOGGER.info("📥 [1/6] 开始执行 ProvideData 任务...");
                 const provideDataSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.ProvideData,
                     {
@@ -91,7 +91,7 @@ class OrchestratorApplication {
                 await job.touch();
 
                 // ==================== 步骤 2: Preprocess ====================
-                LOGGER.info("🔧 [2/5] 开始执行 Preprocess 任务...");
+                LOGGER.info("🔧 [2/6] 开始执行 Preprocess 任务...");
                 const preprocessSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.Preprocess,
                     {
@@ -112,7 +112,7 @@ class OrchestratorApplication {
                 await job.touch();
 
                 // ==================== 步骤 3: AISummarize ====================
-                LOGGER.info("🤖 [3/5] 开始执行 AISummarize 任务...");
+                LOGGER.info("🤖 [3/6] 开始执行 AISummarize 任务...");
                 const aiSummarizeSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.AISummarize,
                     {
@@ -133,7 +133,7 @@ class OrchestratorApplication {
                 await job.touch();
 
                 // ==================== 步骤 4: GenerateEmbedding ====================
-                LOGGER.info("📐 [4/5] 开始执行 GenerateEmbedding 任务...");
+                LOGGER.info("📐 [4/6] 开始执行 GenerateEmbedding 任务...");
                 const generateEmbeddingSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.GenerateEmbedding,
                     {
@@ -206,7 +206,9 @@ class OrchestratorApplication {
         const pipelineIntervalMinutes = config.orchestrator?.pipelineIntervalInMinutes;
 
         LOGGER.debug(`Pipeline 任务将每隔 ${pipelineIntervalMinutes} 分钟执行一次`);
-        await agendaInstance.every(pipelineIntervalMinutes + " minutes", TaskHandlerTypes.RunPipeline);
+        await agendaInstance.every(pipelineIntervalMinutes + " minutes", TaskHandlerTypes.RunPipeline, undefined, {
+            skipImmediate: true
+        });
         await agendaInstance.now(TaskHandlerTypes.RunPipeline);
 
         LOGGER.success("✅ Orchestrator 准备就绪，启动 Agenda 调度器");
