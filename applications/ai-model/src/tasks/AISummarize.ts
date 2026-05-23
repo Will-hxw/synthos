@@ -19,6 +19,9 @@ import {
     PooledTaskResult
 } from "../services/generators/text/PooledTextGeneratorService";
 
+const OPEN_SESSION_DELAY_MS = 10 * 60 * 1000;
+const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 10;
+
 /**
  * AI 摘要任务处理器
  * 负责对群聊消息进行 AI 摘要生成
@@ -75,6 +78,7 @@ export class AISummarizeTaskHandler {
                 const allTasks: PooledTask<TaskContext>[] = [];
 
                 for (const groupId of attrs.groupIds) {
+                    const readyBeforeTimestamp = attrs.endTimeStamp - OPEN_SESSION_DELAY_MS;
                     /* 1. 获取指定时间范围内的消息 */
                     const msgs = (
                         await this.imDbAccessService.getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange(
@@ -96,50 +100,65 @@ export class AISummarizeTaskHandler {
                     this.LOGGER.info(`群 ${groupId} 成功获取到 ${msgs.length} 条有效消息`);
                     await job.touch(); // 保证任务存活
 
-                    /* 2. 按照 sessionId 分组 */
-                    const sessions: Record<string, ProcessedChatMessageWithRawMessage[]> = {};
+                    const candidateSessions = new Map<string, ProcessedChatMessageWithRawMessage[]>();
+                    const currentSessions = this._groupMessagesBySessionId(msgs);
 
-                    for (const msg of msgs) {
-                        const { sessionId } = msg;
-
-                        // 如果 sessionId 已经被生成过摘要，跳过
-                        if (!(await this.agcDbAccessService.isSessionIdSummarized(sessionId))) {
-                            if (!sessions[sessionId]) {
-                                sessions[sessionId] = [];
-                            }
-                            sessions[sessionId].push(msg);
-                        }
+                    for (const [sessionId, sessionMessages] of currentSessions) {
+                        await this._tryCollectReadySession(
+                            candidateSessions,
+                            sessionId,
+                            sessionMessages,
+                            readyBeforeTimestamp
+                        );
                     }
-                    if (Object.keys(sessions).length === 0) {
-                        this.LOGGER.info(`群 ${groupId} 在指定时间范围内无消息，跳过`);
+
+                    const unsummarizedSessionStats =
+                        await this.imDbAccessService.getUnsummarizedSessionStatsByGroupId(
+                            groupId,
+                            UNSUMMARIZED_SESSION_BACKFILL_LIMIT
+                        );
+
+                    for (const sessionStats of unsummarizedSessionStats) {
+                        if (candidateSessions.has(sessionStats.sessionId)) {
+                            continue;
+                        }
+
+                        if (sessionStats.timeEnd > readyBeforeTimestamp) {
+                            this.LOGGER.info(
+                                `session ${sessionStats.sessionId} 距离任务结束时间过近，延迟到后续任务处理`
+                            );
+
+                            continue;
+                        }
+
+                        const sessionMessages = await this.imDbAccessService.getProcessedChatMessagesBySessionId(
+                            sessionStats.sessionId
+                        );
+
+                        await this._tryCollectReadySession(
+                            candidateSessions,
+                            sessionStats.sessionId,
+                            sessionMessages,
+                            readyBeforeTimestamp
+                        );
+                    }
+
+                    if (candidateSessions.size === 0) {
+                        this.LOGGER.info(`群 ${groupId} 没有达到处理条件的未摘要session，跳过`);
                         continue;
                     }
-                    // 考虑到最后一个session可能正在发生，还没有闭合，因此需要删掉
-                    const newestSessionId = msgs[msgs.length - 1].sessionId;
 
-                    delete sessions[newestSessionId];
-                    this.LOGGER.debug(`删掉了最后一个sessionId为 ${newestSessionId} 的session`);
-                    this.LOGGER.info(`分组完成，共 ${Object.keys(sessions).length} 个需要处理的session`);
-
-                    // 3. 删掉消息量不够的session
-                    for (const sessionId in sessions) {
-                        if (sessions[sessionId].length <= 10) {
-                            this.LOGGER.warning(
-                                `session ${sessionId} 消息数量不足，消息数量为${sessions[sessionId].length}，跳过`
-                            );
-                            delete sessions[sessionId];
-                        }
-                    }
+                    this.LOGGER.info(`分组完成，共 ${candidateSessions.size} 个需要处理的session`);
 
                     /* 4. 构建任务列表 */
-                    for (const sessionId in sessions) {
+                    for (const [sessionId, sessionMessages] of candidateSessions) {
                         this.LOGGER.info(
-                            `准备处理session ${sessionId} ，该session内共 ${sessions[sessionId].length} 条消息`
+                            `准备处理session ${sessionId} ，该session内共 ${sessionMessages.length} 条消息`
                         );
 
                         // 构建上下文
                         const ctx = await ctxBuilder.buildCtx(
-                            sessions[sessionId],
+                            sessionMessages,
                             config.groupConfigs[groupId].groupIntroduction
                         );
 
@@ -182,17 +201,17 @@ export class AISummarizeTaskHandler {
                             let results: Omit<Omit<AIDigestResult, "sessionId">, "topicId">[] = [];
 
                             results = JSON.parse(resultStr);
-                            this.LOGGER.success(
-                                `[${completedCount}/${allTasks.length}] session ${sessionId} 生成摘要成功，长度为 ${resultStr.length}`
-                            );
                             if (resultStr.length < 30) {
                                 this.LOGGER.warning(
                                     `session ${sessionId} 生成摘要长度过短，长度为 ${resultStr.length}，跳过`
                                 );
-                                console.log(resultStr);
 
                                 return;
                             }
+
+                            this.LOGGER.success(
+                                `[${completedCount}/${allTasks.length}] session ${sessionId} 生成摘要成功，长度为 ${resultStr.length}`
+                            );
 
                             // 遍历ai生成的结果数组，添加sessionId、topicId，并解析contributors
                             for (const resultItem of results) {
@@ -225,5 +244,57 @@ export class AISummarizeTaskHandler {
                 lockLifetime: 20 * 60 * 1000 // 20分钟
             }
         );
+    }
+
+    /**
+     * 按 sessionId 对消息分组。
+     * @param msgs 已带 sessionId 的消息列表
+     * @returns sessionId 到消息列表的映射
+     */
+    private _groupMessagesBySessionId(
+        msgs: ProcessedChatMessageWithRawMessage[]
+    ): Map<string, ProcessedChatMessageWithRawMessage[]> {
+        const sessions = new Map<string, ProcessedChatMessageWithRawMessage[]>();
+
+        for (const msg of msgs) {
+            if (!sessions.has(msg.sessionId)) {
+                sessions.set(msg.sessionId, []);
+            }
+            sessions.get(msg.sessionId)!.push(msg);
+        }
+
+        return sessions;
+    }
+
+    /**
+     * 收集已经稳定且尚未摘要的 session。
+     * @param candidateSessions 候选 session 映射
+     * @param sessionId 会话ID
+     * @param sessionMessages 会话消息
+     * @param readyBeforeTimestamp 可处理的最晚结束时间
+     */
+    private async _tryCollectReadySession(
+        candidateSessions: Map<string, ProcessedChatMessageWithRawMessage[]>,
+        sessionId: string,
+        sessionMessages: ProcessedChatMessageWithRawMessage[],
+        readyBeforeTimestamp: number
+    ): Promise<void> {
+        if (sessionMessages.length === 0) {
+            return;
+        }
+
+        if (await this.agcDbAccessService.isSessionIdSummarized(sessionId)) {
+            return;
+        }
+
+        const sessionEndTime = Math.max(...sessionMessages.map(msg => msg.timestamp));
+
+        if (sessionEndTime > readyBeforeTimestamp) {
+            this.LOGGER.info(`session ${sessionId} 距离任务结束时间过近，延迟到后续任务处理`);
+
+            return;
+        }
+
+        candidateSessions.set(sessionId, sessionMessages);
     }
 }

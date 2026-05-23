@@ -12,6 +12,8 @@ import { ISplitter } from "../splitters/contracts/ISplitter";
 import { COMMON_TOKENS } from "../di/tokens";
 import { getAccumulativeSplitter, getTimeoutSplitter } from "../di/container";
 
+const HISTORICAL_BACKFILL_MESSAGE_LIMIT = 1000;
+
 /**
  * 预处理任务处理器
  * 负责对消息进行分割和预处理
@@ -73,28 +75,37 @@ export class PreprocessTaskHandler {
 
                     // 开始消息分割，分配sessionId
                     await splitter.init();
-                    const results = await Promise.all(
-                        (await splitter.assignSessionId(groupId, attrs.startTimeStamp, attrs.endTimeStamp)).map<
-                            Promise<ProcessedChatMessage>
-                        >(async result => {
-                            return {
-                                sessionId: result.sessionId!,
-                                msgId: result.msgId,
-                                preProcessedContent: formatMsg(
-                                    result,
-                                    result.quotedMsgId
-                                        ? await this.imDbAccessService.getRawChatMessageByMsgId(result.quotedMsgId)
-                                        : undefined,
-                                    result.quotedMsgContent
-                                )
-                            };
-                        })
-                    );
+                    try {
+                        const currentCount = await this._preprocessRange(
+                            splitter,
+                            groupId,
+                            attrs.startTimeStamp,
+                            attrs.endTimeStamp
+                        );
 
-                    await this.imDbAccessService.storeProcessedChatMessages(results);
-                    await splitter.dispose();
+                        this.LOGGER.success(`为群${groupId}分配了${currentCount}条消息`);
 
-                    this.LOGGER.success(`为群${groupId}分配了${results.length}条消息`);
+                        const backfillRange =
+                            await this.imDbAccessService.getEarliestUnprocessedMessageTimeRangeByGroupId(
+                                groupId,
+                                HISTORICAL_BACKFILL_MESSAGE_LIMIT
+                            );
+
+                        if (backfillRange) {
+                            const backfillCount = await this._preprocessRange(
+                                splitter,
+                                groupId,
+                                backfillRange.timeStart,
+                                backfillRange.timeEnd
+                            );
+
+                            this.LOGGER.success(
+                                `为群${groupId}回填分配了${backfillCount}条历史消息，候选未处理消息数为${backfillRange.count}`
+                            );
+                        }
+                    } finally {
+                        await splitter.dispose();
+                    }
                     await job.touch(); // 保活
                 }
 
@@ -105,5 +116,42 @@ export class PreprocessTaskHandler {
                 priority: "high"
             }
         );
+    }
+
+    /**
+     * 对指定时间范围内的消息分配 sessionId 并写回预处理内容。
+     * @param splitter 消息分割器
+     * @param groupId 群组ID
+     * @param startTimeStamp 起始时间戳
+     * @param endTimeStamp 结束时间戳
+     * @returns 本次写回的消息数量
+     */
+    private async _preprocessRange(
+        splitter: ISplitter,
+        groupId: string,
+        startTimeStamp: number,
+        endTimeStamp: number
+    ): Promise<number> {
+        const results = await Promise.all(
+            (await splitter.assignSessionId(groupId, startTimeStamp, endTimeStamp)).map<
+                Promise<ProcessedChatMessage>
+            >(async result => {
+                return {
+                    sessionId: result.sessionId!,
+                    msgId: result.msgId,
+                    preProcessedContent: formatMsg(
+                        result,
+                        result.quotedMsgId
+                            ? await this.imDbAccessService.getRawChatMessageByMsgId(result.quotedMsgId)
+                            : undefined,
+                        result.quotedMsgContent
+                    )
+                };
+            })
+        );
+
+        await this.imDbAccessService.storeProcessedChatMessages(results);
+
+        return results.length;
     }
 }

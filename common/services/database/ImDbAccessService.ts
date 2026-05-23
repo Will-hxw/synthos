@@ -14,6 +14,20 @@ import { COMMON_TOKENS } from "../../di/tokens";
 import { createIMDBTableSQL } from "./constants/InitialSQL";
 import { CommonDBService } from "./infra/CommonDBService";
 
+export interface MessageRangeStats {
+    groupId: string;
+    count: number;
+    timeStart: number;
+    timeEnd: number;
+}
+
+export interface SessionStats {
+    sessionId: string;
+    messageCount: number;
+    timeStart: number;
+    timeEnd: number;
+}
+
 /**
  * IM 消息数据库访问服务
  * 负责聊天消息的存储和查询
@@ -202,6 +216,114 @@ export class ImDbAccessService extends Disposable {
         const timeEnd = Math.max(...validResults.map(r => r.timeEnd!));
 
         return { timeStart, timeEnd };
+    }
+
+    /**
+     * 获取指定群组中尚未分配 sessionId 的消息统计。
+     * @param groupId 群组ID
+     * @returns 未处理消息的数量和时间范围
+     */
+    public async getUnprocessedMessageStatsByGroupId(groupId: string): Promise<MessageRangeStats | null> {
+        const result = await this.db.get<{
+            count: number;
+            timeStart: number | null;
+            timeEnd: number | null;
+        }>(
+            `SELECT COUNT(*) AS count, MIN(timestamp) AS timeStart, MAX(timestamp) AS timeEnd
+             FROM chat_messages
+             WHERE groupId = ? AND sessionId IS NULL`,
+            [groupId]
+        );
+
+        if (!result || result.count === 0 || result.timeStart === null || result.timeEnd === null) {
+            return null;
+        }
+
+        return {
+            groupId,
+            count: result.count,
+            timeStart: result.timeStart,
+            timeEnd: result.timeEnd
+        };
+    }
+
+    /**
+     * 获取指定群组最早一批尚未分配 sessionId 消息的时间范围。
+     * @param groupId 群组ID
+     * @param limit 单批最多纳入的消息数
+     * @returns 最早未处理批次的时间范围
+     */
+    public async getEarliestUnprocessedMessageTimeRangeByGroupId(
+        groupId: string,
+        limit: number
+    ): Promise<MessageRangeStats | null> {
+        const resolvedLimit = Math.max(1, Math.floor(limit));
+        const result = await this.db.get<{
+            count: number;
+            timeStart: number | null;
+            timeEnd: number | null;
+        }>(
+            `SELECT COUNT(*) AS count, MIN(timestamp) AS timeStart, MAX(timestamp) AS timeEnd
+             FROM (
+                SELECT timestamp
+                FROM chat_messages
+                WHERE groupId = ? AND sessionId IS NULL
+                ORDER BY timestamp ASC
+                LIMIT ?
+             )`,
+            [groupId, resolvedLimit]
+        );
+
+        if (!result || result.count === 0 || result.timeStart === null || result.timeEnd === null) {
+            return null;
+        }
+
+        return {
+            groupId,
+            count: result.count,
+            timeStart: result.timeStart,
+            timeEnd: result.timeEnd
+        };
+    }
+
+    /**
+     * 获取指定群组最早一批尚未生成摘要的 session 统计。
+     * @param groupId 群组ID
+     * @param limit 单批最多纳入的 session 数
+     * @returns 未摘要 session 的消息数量和时间范围
+     */
+    public async getUnsummarizedSessionStatsByGroupId(groupId: string, limit: number): Promise<SessionStats[]> {
+        const resolvedLimit = Math.max(1, Math.floor(limit));
+
+        return await this.db.all<SessionStats>(
+            `SELECT
+                cm.sessionId AS sessionId,
+                COUNT(DISTINCT cm.msgId) AS messageCount,
+                MIN(cm.timestamp) AS timeStart,
+                MAX(cm.timestamp) AS timeEnd
+             FROM chat_messages cm
+             LEFT JOIN ai_digest_results ar ON ar.sessionId = cm.sessionId
+             WHERE cm.groupId = ? AND cm.sessionId IS NOT NULL
+             GROUP BY cm.sessionId
+             HAVING COUNT(ar.topicId) = 0
+             ORDER BY timeEnd ASC
+             LIMIT ?`,
+            [groupId, resolvedLimit]
+        );
+    }
+
+    /**
+     * 获取指定 session 的预处理消息。
+     * @param sessionId 会话ID
+     * @returns 已按时间升序排列的消息列表
+     */
+    public async getProcessedChatMessagesBySessionId(
+        sessionId: string
+    ): Promise<ProcessedChatMessageWithRawMessage[]> {
+        return await this.db.all<ProcessedChatMessageWithRawMessage>(
+            `SELECT * FROM chat_messages WHERE sessionId = ? ORDER BY timestamp ASC`,
+            [sessionId]
+        );
     }
 
     /**
