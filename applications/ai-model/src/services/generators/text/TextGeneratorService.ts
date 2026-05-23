@@ -11,6 +11,8 @@ import { duplicateElements } from "@root/common/util/core/duplicateElements";
 import { sleep } from "@root/common/util/promisify/sleep";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
 
+import { JsonPromptStore } from "../../../context/prompts/JsonPromptStore";
+
 /**
  * 文本生成器
  * 提供基于 LLM 的文本生成能力，支持多模型候选和重试机制
@@ -228,6 +230,60 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
+     * 校验并规范化模型返回的 JSON 内容
+     * @param content 模型返回内容
+     * @returns 可被 JSON.parse 解析的 JSON 字符串
+     */
+    private _validateJsonResult(content: string): string {
+        const validatedResultStr = this._stripJsonCodeFence(content);
+
+        JSON.parse(validatedResultStr);
+
+        return validatedResultStr;
+    }
+
+    /**
+     * 判断模型输出是否像 JSON，避免把普通错误文本包装成合法 JSON
+     * @param content 模型返回内容
+     * @returns 是否像 JSON 对象、数组或 JSON 代码围栏
+     */
+    private _looksLikeJsonPayload(content: string): boolean {
+        const rawTrimmedContent = content.trim();
+        const trimmedContent = this._stripJsonCodeFence(content);
+
+        return trimmedContent.startsWith("{") || trimmedContent.startsWith("[") || rawTrimmedContent.startsWith("```");
+    }
+
+    /**
+     * 格式化未知错误，避免日志和修复提示词丢失关键信息
+     * @param error 未知错误
+     * @returns 可读错误字符串
+     */
+    private _formatUnknownError(error: unknown): string {
+        if (error instanceof Error) {
+            return `${error.name}: ${error.message}`;
+        }
+
+        return String(error);
+    }
+
+    /**
+     * 尝试用同一模型修复非法 JSON 输出
+     * @param modelName 模型名称
+     * @param invalidJson 原始非法 JSON
+     * @param parseError JSON.parse 报错
+     * @returns 修复且通过校验的 JSON 字符串
+     */
+    private async _repairJsonResult(modelName: string, invalidJson: string, parseError: unknown): Promise<string> {
+        const prompt = (
+            await JsonPromptStore.getJsonRepairPrompt(invalidJson, this._formatUnknownError(parseError))
+        ).serializeToString();
+        const repairedResultStr = await this.doGenerateTextStream(modelName, prompt);
+
+        return this._validateJsonResult(repairedResultStr);
+    }
+
+    /**
      * 无状态的、带重试机制的、带候选机制的文本生成方法
      * @param modelNames 模型候选列表，允许为空。如果为空，则只使用置顶的的模型候选列表
      * @param input 输入文本
@@ -260,8 +316,21 @@ export class TextGeneratorService extends Disposable {
 
                     // 尝试parseJson，如果不符合json格式，会直接抛错
                     if (checkJsonFormat) {
-                        validatedResultStr = this._stripJsonCodeFence(generatedResultStr);
-                        JSON.parse(validatedResultStr);
+                        try {
+                            validatedResultStr = this._validateJsonResult(generatedResultStr);
+                        } catch (parseError) {
+                            if (!this._looksLikeJsonPayload(generatedResultStr)) {
+                                throw parseError;
+                            }
+                            this.LOGGER.warning(
+                                `模型 ${modelName} 生成结果不是合法 JSON，错误信息为：${this._formatUnknownError(parseError)}，尝试修复 JSON`
+                            );
+                            validatedResultStr = await this._repairJsonResult(
+                                modelName,
+                                generatedResultStr,
+                                parseError
+                            );
+                        }
                     }
                     resultStr = validatedResultStr;
                     selectedModelName = modelName;

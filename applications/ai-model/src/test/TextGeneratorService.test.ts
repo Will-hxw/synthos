@@ -85,4 +85,37 @@ describe("TextGeneratorService", () => {
             content: '{"ok":true}'
         });
     });
+
+    it("JSON 校验失败后应先尝试修复看起来像 JSON 的响应", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 "可以接受""}]')
+            .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]');
+
+        const result = await service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true);
+
+        expect(result).toEqual({
+            selectedModelName: "mock-model",
+            content: '[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]'
+        });
+        expect(doGenerateTextStream).toHaveBeenCalledTimes(2);
+    });
+
+    it("JSON 修复失败后应继续尝试下一个模型候选", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 "可以接受""}]')
+            .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 "可以接受""}]')
+            .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]');
+
+        const result = await service.generateTextWithModelCandidates(["bad-model", "good-model"], "生成 JSON", true);
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: '[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]'
+        });
+        expect(doGenerateTextStream).toHaveBeenCalledTimes(3);
+    });
 });

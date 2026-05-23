@@ -46,11 +46,14 @@ export class IMPromptStore {
             new CtxTemplateNode().setTitle("群聊详情").setContentText(groupIntroduction),
             new CtxTemplateNode().setTitle("群聊记录").setContentText(messages),
             new CtxTemplateNode().setTitle("输出格式要求").setContentText(`
-                    重要：必须返回标准JSON格式，严格遵守以下规则：
-                    1. 只使用英文双引号 " 不要使用中文引号 " "
-                    2. 字符串内容中的引号必须转义为 \\"
-                    3. 多个对象之间用逗号分隔
-                    4. 不要在JSON外添加任何文字说明
+                    重要：必须返回能被 JSON.parse 直接解析的标准 JSON 数组，严格遵守以下规则：
+                    1. 只输出 JSON 数组本身，不要在 JSON 外添加任何文字说明，不要使用 Markdown 代码块
+                    2. JSON 的键名和字符串值必须使用英文双引号 " 包裹
+                    3. 字符串内容中如果需要出现英文双引号 " ，必须转义为 \\" ，严禁在字符串内部直接输出未转义的英文双引号
+                    4. 如果原始聊天内容包含英文双引号、JSON片段、代码、引用文本等，请保留语义，但必须完成 JSON 转义
+                    5. 字符串内容中不要输出未转义的换行控制字符；如需表达换行，请改写为普通中文句子
+                    6. 多个对象之间用逗号分隔，不要输出尾随逗号、注释或多余字段
+                    7. 输出前请自检一次：整体内容必须可以被 JSON.parse 成功解析
 
                     请严格按照以下JSON格式返回，确保可以被标准JSON解析器解析：
                     [
