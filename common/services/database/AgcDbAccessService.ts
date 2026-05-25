@@ -17,6 +17,23 @@ export interface LatestTopicRecord extends AIDigestResult {
     interestScore: number | null;
 }
 
+export interface LatestTopicPageQuery {
+    timeStart: number;
+    timeEnd: number;
+    page: number;
+    pageSize: number;
+    groupId?: string;
+    searchText?: string;
+    sortByInterest: boolean;
+    excludeTopicIds?: string[];
+    includeTopicIds?: string[];
+}
+
+export interface LatestTopicPageResult {
+    records: LatestTopicRecord[];
+    total: number;
+}
+
 /**
  * AI 生成内容数据库访问服务
  * 负责 AI 摘要结果的存储和查询
@@ -26,6 +43,115 @@ export interface LatestTopicRecord extends AIDigestResult {
 export class AgcDbAccessService extends Disposable {
     private LOGGER = Logger.withTag("AgcDbAccessService");
     private db: CommonDBService | null = null;
+
+    public async getLatestTopicRecordsPageByTimeRange(
+        query: LatestTopicPageQuery
+    ): Promise<LatestTopicPageResult> {
+        const includeTopicIds = this._uniqueStrings(query.includeTopicIds);
+
+        if (query.includeTopicIds && includeTopicIds.length === 0) {
+            return {
+                records: [],
+                total: 0
+            };
+        }
+
+        const params: Array<number | string> = [query.timeStart, query.timeEnd];
+        let groupFilterSql = "";
+
+        if (query.groupId) {
+            groupFilterSql = " AND groupId = ?";
+            params.push(query.groupId);
+        }
+
+        const filters: string[] = [];
+        const searchText = query.searchText?.trim().toLowerCase();
+
+        if (searchText) {
+            const likePattern = `%${this._escapeLikePattern(searchText)}%`;
+
+            filters.push(`(
+                LOWER(COALESCE(topic, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(detail, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(contributors, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(groupId, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(sessionId, '')) LIKE ? ESCAPE '\\'
+            )`);
+            params.push(likePattern, likePattern, likePattern, likePattern, likePattern);
+        }
+
+        const excludeTopicIds = this._uniqueStrings(query.excludeTopicIds);
+
+        if (excludeTopicIds.length > 0) {
+            filters.push(`topicId NOT IN (${excludeTopicIds.map(() => "?").join(", ")})`);
+            params.push(...excludeTopicIds);
+        }
+
+        if (includeTopicIds.length > 0) {
+            filters.push(`topicId IN (${includeTopicIds.map(() => "?").join(", ")})`);
+            params.push(...includeTopicIds);
+        }
+
+        const whereSql = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+        const cteSql = `WITH matched_sessions AS (
+                SELECT DISTINCT sessionId
+                FROM chat_messages
+                WHERE timestamp BETWEEN ? AND ?
+                  AND sessionId IS NOT NULL${groupFilterSql}
+            ),
+            session_durations AS (
+                SELECT
+                    cm.sessionId AS sessionId,
+                    MIN(cm.timestamp) AS timeStart,
+                    MAX(cm.timestamp) AS timeEnd,
+                    MIN(cm.groupId) AS groupId
+                FROM chat_messages cm
+                INNER JOIN matched_sessions ms ON ms.sessionId = cm.sessionId
+                GROUP BY cm.sessionId
+            ),
+            topic_records AS (
+                SELECT
+                    ar.topicId AS topicId,
+                    COALESCE(ar.sessionId, '') AS sessionId,
+                    COALESCE(ar.topic, '') AS topic,
+                    COALESCE(ar.contributors, '') AS contributors,
+                    COALESCE(ar.detail, '') AS detail,
+                    COALESCE(ar.modelName, '') AS modelName,
+                    COALESCE(ar.updateTime, 0) AS updateTime,
+                    sd.timeStart AS timeStart,
+                    sd.timeEnd AS timeEnd,
+                    COALESCE(sd.groupId, '') AS groupId,
+                    isr.scoreV1 AS interestScore
+                FROM ai_digest_results ar
+                INNER JOIN session_durations sd ON sd.sessionId = ar.sessionId
+                LEFT JOIN interset_score_results isr ON isr.topicId = ar.topicId
+            ),
+            filtered_records AS (
+                SELECT * FROM topic_records
+                ${whereSql}
+            )`;
+        const countResult = await this.db.get<{ total: number }>(
+            `${cteSql}
+            SELECT COUNT(*) AS total FROM filtered_records`,
+            [...params]
+        );
+        const offset = (query.page - 1) * query.pageSize;
+        const orderBySql = query.sortByInterest
+            ? "CASE WHEN interestScore IS NULL THEN 1 ELSE 0 END ASC, interestScore DESC, timeEnd DESC, updateTime DESC, topicId ASC"
+            : "timeEnd DESC, updateTime DESC, topicId ASC";
+        const records = await this.db.all<LatestTopicRecord>(
+            `${cteSql}
+            SELECT * FROM filtered_records
+            ORDER BY ${orderBySql}
+            LIMIT ? OFFSET ?`,
+            [...params, query.pageSize, offset]
+        );
+
+        return {
+            records,
+            total: countResult?.total ?? 0
+        };
+    }
 
     /**
      * 初始化数据库服务
@@ -194,5 +320,17 @@ export class AgcDbAccessService extends Disposable {
     // 获取数据消息，用于数据库迁移、导出、备份等操作
     public async selectAll(): Promise<AIDigestResult[]> {
         return this.db.all<AIDigestResult>(`SELECT * FROM ai_digest_results`);
+    }
+
+    private _escapeLikePattern(value: string): string {
+        return value.split("\\").join("\\\\").split("%").join("\\%").split("_").join("\\_");
+    }
+
+    private _uniqueStrings(values: string[] | undefined): string[] {
+        if (!values) {
+            return [];
+        }
+
+        return Array.from(new Set(values));
     }
 }

@@ -40,6 +40,16 @@ export class KVStore<T = any> extends Disposable {
         }
     }
 
+    public async keys(): Promise<string[]> {
+        const keys: string[] = [];
+
+        for await (const key of this.db.keys()) {
+            keys.push(key);
+        }
+
+        return keys;
+    }
+
     /**
      * 删除键
      */

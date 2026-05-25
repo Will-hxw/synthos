@@ -35,13 +35,17 @@ export class TopicStatusService {
      * 批量检查话题收藏状态
      */
     async checkFavoriteStatus(topicIds: string[]): Promise<Record<string, boolean>> {
-        const favoriteStatus: Record<string, boolean> = {};
+        const entries = await Promise.all(
+            topicIds.map(
+                async topicId => [topicId, await this.favoriteStatusManager.isTopicFavorite(topicId)] as const
+            )
+        );
 
-        for (const topicId of topicIds) {
-            favoriteStatus[topicId] = await this.favoriteStatusManager.isTopicFavorite(topicId);
-        }
+        return Object.fromEntries(entries);
+    }
 
-        return favoriteStatus;
+    public async getFavoriteTopicIds(): Promise<string[]> {
+        return this.favoriteStatusManager.getFavoriteTopicIds();
     }
 
     // ==================== 已读相关 ====================
@@ -64,12 +68,14 @@ export class TopicStatusService {
      * 批量检查话题已读状态
      */
     async checkReadStatus(topicIds: string[]): Promise<Record<string, boolean>> {
-        const readStatus: Record<string, boolean> = {};
+        const entries = await Promise.all(
+            topicIds.map(async topicId => [topicId, await this.readStatusManager.isTopicRead(topicId)] as const)
+        );
 
-        for (const topicId of topicIds) {
-            readStatus[topicId] = await this.readStatusManager.isTopicRead(topicId);
-        }
+        return Object.fromEntries(entries);
+    }
 
-        return readStatus;
+    public async getReadTopicIds(): Promise<string[]> {
+        return this.readStatusManager.getReadTopicIds();
     }
 }

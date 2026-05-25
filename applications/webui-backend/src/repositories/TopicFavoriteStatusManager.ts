@@ -8,6 +8,10 @@ export class TopicFavoriteStatusManager {
         this.store = new KVStore<boolean>(dbPath);
     }
 
+    public async getFavoriteTopicIds(): Promise<string[]> {
+        return this.store.keys();
+    }
+
     /**
      * 获取单例实例
      * @param dbPath 可选：数据库路径，默认为 './data/favorite_topics'
