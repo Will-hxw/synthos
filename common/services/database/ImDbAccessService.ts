@@ -342,12 +342,13 @@ export class ImDbAccessService extends Disposable {
      * 根据消息id获取raw消息
      * @param msgId 消息id
      * @returns 消息对象
+     * @throws 当消息不存在时抛出错误
      */
     public async getRawChatMessageByMsgId(msgId: string): Promise<RawChatMessage> {
         const result = await this.db.get<RawChatMessage>(`SELECT * FROM chat_messages WHERE msgId =?`, [msgId]);
 
         if (!result) {
-            this.LOGGER.warning(`未找到消息id为${msgId}的消息`);
+            throw new Error(`消息不存在，msgId: ${msgId}`);
         }
 
         return result;
