@@ -15,8 +15,8 @@ import { Search, X } from "lucide-react";
  */
 const ConfigSidebar: React.FC<ConfigSidebarProps> = ({ sections, activeSection, onSectionClick, searchQuery, onSearchQueryChange }) => {
     return (
-        <Card className="w-64 h-fit sticky top-20">
-            <CardBody className="p-4 space-y-4">
+        <Card className="w-64 sticky top-20 self-start h-[calc(100vh-6rem)]">
+            <CardBody className="p-4 flex h-full min-h-0 flex-col gap-4">
                 {/* 搜索框 */}
                 <Input
                     classNames={{
@@ -36,7 +36,7 @@ const ConfigSidebar: React.FC<ConfigSidebarProps> = ({ sections, activeSection, 
                     onChange={e => onSearchQueryChange(e.target.value)}
                 />
 
-                <ScrollShadow className="max-h-[65vh]">
+                <ScrollShadow className="flex-1 min-h-0">
                     <nav className="space-y-1">
                         {sections.map(section => (
                             <button

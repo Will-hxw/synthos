@@ -240,11 +240,6 @@ export default function ReportsPage() {
         }
     }, [selectedDate, viewMode, fetchReportsByDate, isInitializedFromUrl]);
 
-    // 切换类型时重置页码
-    useEffect(() => {
-        setPage(1);
-    }, [selectedType]);
-
     // 加载邮件配置状态
     useEffect(() => {
         const loadEmailConfig = async () => {
@@ -483,7 +478,15 @@ export default function ReportsPage() {
 
                             {/* 报告类型筛选（仅列表视图） */}
                             {viewMode === "list" && (
-                                <Tabs aria-label="报告类型" selectedKey={selectedType} size="sm" onSelectionChange={key => setSelectedType(key as ReportType | "all")}>
+                                <Tabs
+                                    aria-label="报告类型"
+                                    selectedKey={selectedType}
+                                    size="sm"
+                                    onSelectionChange={key => {
+                                        setSelectedType(key as ReportType | "all");
+                                        setPage(1);
+                                    }}
+                                >
                                     <Tab key="all" title="全部" />
                                     <Tab key="half-daily" title="半日报" />
                                     <Tab key="weekly" title="周报" />

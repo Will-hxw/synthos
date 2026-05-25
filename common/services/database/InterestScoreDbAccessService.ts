@@ -41,13 +41,12 @@ export class InterestScoreDbAccessService extends Disposable {
 
     // 如果对应的topicid不存在 或者 topicid存在但是没有对应的分数，那么该项目对应的score为null
     public async getInterestScoreResult(topicId: string, version: number = 1): Promise<number | null> {
-        const result = await this.db.get<{ scoreV1: number | null }>(
-            `SELECT scoreV${version} FROM interset_score_results WHERE topicId = ?`,
+        const result = await this.db.get<{ score: number | null }>(
+            `SELECT scoreV${version} AS score FROM interset_score_results WHERE topicId = ?`,
             [topicId]
         );
 
-        // TODO 由于版本号是可配置的，下面这一行的scoreVx不应该写死
-        return result?.scoreV1 || null;
+        return result?.score ?? null;
     }
 
     public async isInterestScoreResultExist(topicId: string, version: number = 1): Promise<boolean> {

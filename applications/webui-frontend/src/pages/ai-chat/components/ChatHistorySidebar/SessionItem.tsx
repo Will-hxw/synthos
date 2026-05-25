@@ -8,7 +8,7 @@ import type { ExtendedSessionListItem } from "./types";
 
 import React, { useState } from "react";
 import { Button, Input, Popover, PopoverContent, PopoverTrigger, Listbox, ListboxItem, cn } from "@heroui/react";
-import { Check, Edit2, MessageSquare, MoreVertical, Pin, PinOff, Share2, Trash2, X, Download } from "lucide-react";
+import { Check, Edit2, MessageSquare, MoreVertical, Pin, PinOff, Trash2, X } from "lucide-react";
 
 interface SessionItemProps {
     session: ExtendedSessionListItem;
@@ -21,8 +21,6 @@ interface SessionItemProps {
     onCancelEdit: () => void;
     onEditingTitleChange: (value: string) => void;
     onTogglePin: () => void;
-    onShare: () => void;
-    onExport: () => void;
     onDelete: () => void;
 }
 
@@ -37,8 +35,6 @@ export const SessionItem: React.FC<SessionItemProps> = ({
     onCancelEdit,
     onEditingTitleChange,
     onTogglePin,
-    onShare,
-    onExport,
     onDelete
 }) => {
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
@@ -161,26 +157,6 @@ export const SessionItem: React.FC<SessionItemProps> = ({
                                 }}
                             >
                                 编辑标题
-                            </ListboxItem>
-                            <ListboxItem
-                                key="share"
-                                startContent={<Share2 className="w-4 h-4" />}
-                                onPress={() => {
-                                    onShare();
-                                    setIsPopoverOpen(false);
-                                }}
-                            >
-                                分享
-                            </ListboxItem>
-                            <ListboxItem
-                                key="export"
-                                startContent={<Download className="w-4 h-4" />}
-                                onPress={() => {
-                                    onExport();
-                                    setIsPopoverOpen(false);
-                                }}
-                            >
-                                导出
                             </ListboxItem>
                             <ListboxItem
                                 key="delete"

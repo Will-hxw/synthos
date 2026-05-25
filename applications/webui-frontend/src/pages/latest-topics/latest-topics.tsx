@@ -27,9 +27,11 @@ const MIN_UNIX_MS_TIMESTAMP = 0;
 const DEFAULT_TOPICS_PER_PAGE = 3;
 const DEFAULT_START_DATE = new CalendarDate(1970, 1, 1);
 
-const getDefaultEndDate = () => today(getLocalTimeZone()).add({ days: 1 });
+const getDefaultEndDate = () => today(getLocalTimeZone());
 
 const normalizeUnixMsTimestamp = (date: Date): number => Math.max(MIN_UNIX_MS_TIMESTAMP, date.getTime());
+
+const toInclusiveDateEnd = (date: CalendarDate): Date => date.add({ days: 1 }).toDate(getLocalTimeZone());
 
 const getApiDataOrThrow = <T,>(response: ApiResponse<T>, action: string): T => {
     if (!response.success) {
@@ -230,7 +232,7 @@ export default function LatestTopicsPage() {
     const fetchLatestTopics = async () => {
         const requestId = requestSeqRef.current + 1;
         const start = dateRange.start.toDate(getLocalTimeZone());
-        const end = dateRange.end.toDate(getLocalTimeZone());
+        const end = toInclusiveDateEnd(dateRange.end);
 
         requestSeqRef.current = requestId;
         setLoading(true);

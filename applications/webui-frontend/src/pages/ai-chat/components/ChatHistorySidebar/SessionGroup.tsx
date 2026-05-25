@@ -19,8 +19,6 @@ interface SessionGroupProps {
     onCancelEdit: () => void;
     onEditingTitleChange: (value: string) => void;
     onTogglePin: (id: string) => void;
-    onShare: (id: string) => void;
-    onExport: (id: string) => void;
     onDelete: (id: string) => void;
 }
 
@@ -36,8 +34,6 @@ export const SessionGroup: React.FC<SessionGroupProps> = ({
     onCancelEdit,
     onEditingTitleChange,
     onTogglePin,
-    onShare,
-    onExport,
     onDelete
 }) => {
     if (sessions.length === 0) {
@@ -58,10 +54,8 @@ export const SessionGroup: React.FC<SessionGroupProps> = ({
                         onCancelEdit={onCancelEdit}
                         onDelete={() => onDelete(session.id)}
                         onEditingTitleChange={onEditingTitleChange}
-                        onExport={() => onExport(session.id)}
                         onSaveEdit={() => onSaveEdit(session.id)}
                         onSelect={() => onSelectSession(session.id)}
-                        onShare={() => onShare(session.id)}
                         onStartEdit={() => onStartEdit(session)}
                         onTogglePin={() => onTogglePin(session.id)}
                     />

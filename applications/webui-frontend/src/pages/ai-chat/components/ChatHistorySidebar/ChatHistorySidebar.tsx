@@ -283,18 +283,6 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
         }
     };
 
-    // 分享会话
-    const handleShare = async (sessionId: string) => {
-        // TODO: 实现分享功能
-        console.log("分享会话:", sessionId);
-    };
-
-    // 导出会话
-    const handleExport = async (sessionId: string) => {
-        // TODO: 实现导出功能
-        console.log("导出会话:", sessionId);
-    };
-
     // 新建会话的处理
     const handleNewChat = () => {
         onNewSession();
@@ -391,10 +379,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 onCancelEdit={handleCancelEdit}
                                 onDelete={handleDelete}
                                 onEditingTitleChange={setEditingTitle}
-                                onExport={handleExport}
                                 onSaveEdit={handleSaveTitle}
                                 onSelectSession={handleChatSelect}
-                                onShare={handleShare}
                                 onStartEdit={handleStartEdit}
                                 onTogglePin={handleTogglePin}
                             />
@@ -407,10 +393,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 onCancelEdit={handleCancelEdit}
                                 onDelete={handleDelete}
                                 onEditingTitleChange={setEditingTitle}
-                                onExport={handleExport}
                                 onSaveEdit={handleSaveTitle}
                                 onSelectSession={handleChatSelect}
-                                onShare={handleShare}
                                 onStartEdit={handleStartEdit}
                                 onTogglePin={handleTogglePin}
                             />
@@ -423,10 +407,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 onCancelEdit={handleCancelEdit}
                                 onDelete={handleDelete}
                                 onEditingTitleChange={setEditingTitle}
-                                onExport={handleExport}
                                 onSaveEdit={handleSaveTitle}
                                 onSelectSession={handleChatSelect}
-                                onShare={handleShare}
                                 onStartEdit={handleStartEdit}
                                 onTogglePin={handleTogglePin}
                             />
@@ -439,10 +421,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 onCancelEdit={handleCancelEdit}
                                 onDelete={handleDelete}
                                 onEditingTitleChange={setEditingTitle}
-                                onExport={handleExport}
                                 onSaveEdit={handleSaveTitle}
                                 onSelectSession={handleChatSelect}
-                                onShare={handleShare}
                                 onStartEdit={handleStartEdit}
                                 onTogglePin={handleTogglePin}
                             />
@@ -455,10 +435,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 onCancelEdit={handleCancelEdit}
                                 onDelete={handleDelete}
                                 onEditingTitleChange={setEditingTitle}
-                                onExport={handleExport}
                                 onSaveEdit={handleSaveTitle}
                                 onSelectSession={handleChatSelect}
-                                onShare={handleShare}
                                 onStartEdit={handleStartEdit}
                                 onTogglePin={handleTogglePin}
                             />
@@ -471,10 +449,8 @@ const ChatHistorySidebar: React.FC<ChatHistorySidebarProps> = ({
                                 onCancelEdit={handleCancelEdit}
                                 onDelete={handleDelete}
                                 onEditingTitleChange={setEditingTitle}
-                                onExport={handleExport}
                                 onSaveEdit={handleSaveTitle}
                                 onSelectSession={handleChatSelect}
-                                onShare={handleShare}
                                 onStartEdit={handleStartEdit}
                                 onTogglePin={handleTogglePin}
                             />
