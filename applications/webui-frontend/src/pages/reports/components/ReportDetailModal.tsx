@@ -86,6 +86,11 @@ export default function ReportDetailModal({
     };
 
     const typeConfig = getTypeConfig(report.type);
+    const visibleActiveGroups = report.statistics.mostActiveGroups.filter(group => {
+        const normalizedGroup = group.trim().toLowerCase();
+
+        return normalizedGroup !== "" && normalizedGroup !== "unknown";
+    });
 
     return (
         <Modal isOpen={isOpen} scrollBehavior="inside" size="5xl" onClose={onClose}>
@@ -116,9 +121,7 @@ export default function ReportDetailModal({
 
                                 <div className="flex flex-col items-center p-4 bg-white/50 rounded-lg">
                                     <Users className="text-secondary mb-2" size={24} />
-                                    <span className="text-md font-semibold text-secondary text-center">
-                                        {report.statistics.mostActiveGroups.length > 0 ? report.statistics.mostActiveGroups.slice(0, 2).join("、") : "暂无"}
-                                    </span>
+                                    <span className="text-md font-semibold text-secondary text-center">{visibleActiveGroups.length > 0 ? visibleActiveGroups.slice(0, 2).join("、") : "暂无"}</span>
                                     <span className="text-sm text-default-600">最活跃群组</span>
                                 </div>
 

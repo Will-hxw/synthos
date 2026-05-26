@@ -63,6 +63,11 @@ export default function ReportCard({ report, onClick, readReports = {}, onMarkAs
     const typeConfig = getTypeConfig(report.type);
     const statusConfig = getStatusConfig(report.summaryStatus);
     const isRead = readReports[report.reportId] === true;
+    const visibleActiveGroups = report.statistics.mostActiveGroups.filter(group => {
+        const normalizedGroup = group.trim().toLowerCase();
+
+        return normalizedGroup !== "" && normalizedGroup !== "unknown";
+    });
 
     // 处理已读按钮点击，阻止事件冒泡
     const handleMarkAsReadClick = (e: React.MouseEvent) => {
@@ -109,10 +114,10 @@ export default function ReportCard({ report, onClick, readReports = {}, onMarkAs
                             <span className="text-sm">{report.statistics.topicCount} 个话题</span>
                         </div>
 
-                        {report.statistics.mostActiveGroups.length > 0 && (
+                        {visibleActiveGroups.length > 0 && (
                             <div className="flex items-center gap-2 text-default-600">
                                 <Users size={16} />
-                                <span className="text-sm truncate max-w-[150px]">{report.statistics.mostActiveGroups[0]}</span>
+                                <span className="text-sm truncate max-w-[150px]">{visibleActiveGroups[0]}</span>
                             </div>
                         )}
 
