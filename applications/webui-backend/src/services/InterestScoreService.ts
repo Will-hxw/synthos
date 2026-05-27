@@ -16,16 +16,7 @@ export class InterestScoreService {
     /**
      * 根据多个 topicId 获取兴趣度评分结果
      */
-    async getInterestScoreResults(topicIds: string[]) {
-        const results = [];
-
-        for (const topicId of topicIds) {
-            results.push({
-                topicId,
-                score: await this.interestScoreDbAccessService.getInterestScoreResult(topicId)
-            });
-        }
-
-        return results;
+    public async getInterestScoreResults(topicIds: string[]) {
+        return this.interestScoreDbAccessService.getInterestScoreResults(topicIds);
     }
 }

@@ -398,8 +398,9 @@ SQL 使用别名：`SELECT scoreV${version} AS score ...`，返回 `result?.scor
 
 - 修复内容：新增批量 DB 方法 `getSessionIdsByGroupIdsAndTimeRange`、`getAIDigestResultsBySessionIds`、`getExistingInterestScoreTopicIds` 和 `storeInterestScoreResults`；摘要和兴趣分批量写入改为事务提交。
 - 任务链路：`GenerateEmbedding`、`InterestScore`、`LLMInterestEvaluationAndNotification` 不再按 group/session/topic 逐项串行读取；webui-backend 同名批量接口也改为复用公共批量查询。
+- 收尾补充：新增 `getInterestScoreResults` 批量读取兴趣分，`POST /api/interest-score-results` 不再按 topicId 串行查询，且保持原 API 请求和响应结构不变。
 - 兼容边界：不改变任务输出结果、API 响应结构和数据库表结构。
-- 验证方式：新增/更新公共 DB 服务单测与 LLM 兴趣任务单测；相关子项目 TypeScript 检查通过。
+- 验证方式：新增/更新公共 DB 服务单测、webui-backend 兴趣分 service/controller 单测与 LLM 兴趣任务单测；相关子项目 TypeScript 检查通过。
 
 ### 问题现象
 
