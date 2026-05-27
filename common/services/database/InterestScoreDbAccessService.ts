@@ -81,6 +81,38 @@ export class InterestScoreDbAccessService extends Disposable {
         return result?.score ?? null;
     }
 
+    /**
+     * 批量读取多个 topicId 的兴趣分。
+     * @param topicIds 待读取的 topicId
+     * @param version 分数版本
+     * @returns 按输入 topicId 顺序返回的兴趣分结果
+     */
+    public async getInterestScoreResults(
+        topicIds: string[],
+        version: number = 1
+    ): Promise<{ topicId: string; score: number | null }[]> {
+        if (topicIds.length === 0) {
+            return [];
+        }
+
+        const uniqueTopicIds = Array.from(new Set(topicIds));
+        const placeholders = uniqueTopicIds.map(() => "?").join(", ");
+        const rows = await this.db.all<{ topicId: string; score: number | null }>(
+            `SELECT topicId, scoreV${version} AS score FROM interset_score_results WHERE topicId IN (${placeholders})`,
+            uniqueTopicIds
+        );
+        const scoreMap = new Map<string, number | null>();
+
+        for (const row of rows) {
+            scoreMap.set(row.topicId, row.score ?? null);
+        }
+
+        return topicIds.map(topicId => ({
+            topicId,
+            score: scoreMap.get(topicId) ?? null
+        }));
+    }
+
     public async isInterestScoreResultExist(topicId: string, version: number = 1): Promise<boolean> {
         // 返回结果类似 { 'EXISTS(SELECT 1 FROM interset_score_results WHERE topicId = ?)': 0 }
         const result = await this.db.get(

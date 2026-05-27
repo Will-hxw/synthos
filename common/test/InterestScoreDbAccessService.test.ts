@@ -61,6 +61,44 @@ describe("InterestScoreDbAccessService", () => {
         expect(result).toBeNull();
     });
 
+    it("应批量读取兴趣分并保持输入顺序和重复项", async () => {
+        mockCommonDBService.all.mockResolvedValue([
+            { topicId: "topic-2", score: 0 },
+            { topicId: "topic-1", score: 0.75 },
+            { topicId: "topic-4", score: null }
+        ]);
+        const service = new InterestScoreDbAccessService();
+
+        await service.init();
+        const result = await service.getInterestScoreResults(
+            ["topic-1", "topic-2", "topic-1", "topic-3", "topic-4"],
+            2
+        );
+
+        expect(mockCommonDBService.all).toHaveBeenCalledTimes(1);
+        expect(mockCommonDBService.all).toHaveBeenCalledWith(
+            "SELECT topicId, scoreV2 AS score FROM interset_score_results WHERE topicId IN (?, ?, ?, ?)",
+            ["topic-1", "topic-2", "topic-3", "topic-4"]
+        );
+        expect(result).toEqual([
+            { topicId: "topic-1", score: 0.75 },
+            { topicId: "topic-2", score: 0 },
+            { topicId: "topic-1", score: 0.75 },
+            { topicId: "topic-3", score: null },
+            { topicId: "topic-4", score: null }
+        ]);
+    });
+
+    it("批量读取兴趣分时空数组不应访问数据库", async () => {
+        const service = new InterestScoreDbAccessService();
+
+        await service.init();
+        const result = await service.getInterestScoreResults([]);
+
+        expect(result).toEqual([]);
+        expect(mockCommonDBService.all).not.toHaveBeenCalled();
+    });
+
     it("应批量读取已有兴趣分的topicId集合", async () => {
         mockCommonDBService.all.mockResolvedValue([{ topicId: "topic-1" }, { topicId: "topic-3" }]);
         const service = new InterestScoreDbAccessService();
