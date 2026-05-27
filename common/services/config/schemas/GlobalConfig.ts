@@ -19,6 +19,7 @@ export const ModelConfigSchema = z.object({
  */
 export const GroupConfigSchema = z.object({
     IM: z.enum(["QQ", "WeChat"]).describe("IM 平台类型"),
+    groupName: z.string().default("").describe("群名称，用于前端展示；为空时使用群号"),
     splitStrategy: z.enum(["realtime", "accumulative"]).describe("消息分割策略"),
     groupIntroduction: z.string().describe("群简介，用于拼接在 context 里面"),
     aiModels: z.array(z.string()).describe("要使用的 AI 模型名列表，按优先级排序")

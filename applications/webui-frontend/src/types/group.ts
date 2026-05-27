@@ -7,6 +7,7 @@
  */
 export interface GroupDetail {
     IM: string;
+    groupName: string;
     splitStrategy: string;
     groupIntroduction: string;
     aiModel: string;

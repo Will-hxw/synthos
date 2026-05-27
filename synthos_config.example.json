@@ -91,6 +91,7 @@
     "groupConfigs": {
         "example-group": {
             "IM": "QQ",
+            "groupName": "示例群",
             "splitStrategy": "accumulative",
             "groupIntroduction": "",
             "aiModels": ["example-model"]

@@ -336,6 +336,16 @@ export default function LatestTopicsPage() {
 
     const currentPageTopics = topics;
 
+    const getGroupSelectLabel = (groupId: string): string => {
+        const groupName = groups[groupId]?.groupName;
+
+        if (groupName && groupName.trim().length > 0) {
+            return groupName.trim();
+        }
+
+        return groupId;
+    };
+
     // 标记话题为已读
     const markAsRead = async (topicId: string) => {
         try {
@@ -469,11 +479,15 @@ export default function LatestTopicsPage() {
                                         setPage(1);
                                     }}
                                 >
-                                    {Object.keys(groups).map(groupId => (
-                                        <SelectItem key={groupId} startContent={<QQAvatar qqId={groupId} type="group" />}>
-                                            {groupId}
-                                        </SelectItem>
-                                    ))}
+                                    {Object.keys(groups).map(groupId => {
+                                        const groupLabel = getGroupSelectLabel(groupId);
+
+                                        return (
+                                            <SelectItem key={groupId} startContent={<QQAvatar qqId={groupId} type="group" />} textValue={groupLabel}>
+                                                {groupLabel}
+                                            </SelectItem>
+                                        );
+                                    })}
                                 </Select>
 
                                 {/* 筛选控件 */}

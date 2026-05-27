@@ -52,6 +52,7 @@ const generateMockGroupDetails = (): GroupDetailsRecord => {
 
         groups[groupId] = {
             IM: platforms[platformIndex],
+            groupName: `模拟群 ${i}`,
             splitStrategy: splitStrategies[strategyIndex],
             groupIntroduction: groupIntroductions[i - 1],
             aiModel: aiModels[modelIndex]
