@@ -53,6 +53,14 @@ const getErrorMessage = (error: unknown): string => {
     return "未知错误";
 };
 
+const isAbortError = (error: unknown): boolean => {
+    if (error instanceof DOMException) {
+        return error.name === "AbortError";
+    }
+
+    return typeof error === "object" && error !== null && "name" in error && (error as { name?: string }).name === "AbortError";
+};
+
 export default function LatestTopicsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const [topics, setTopics] = useState<TopicItem[]>([]);
@@ -83,6 +91,16 @@ export default function LatestTopicsPage() {
     // 标记是否已从URL初始化
     const [isInitializedFromUrl, setIsInitializedFromUrl] = useState<boolean>(false);
     const requestSeqRef = useRef<number>(0);
+    const latestTopicsAbortRef = useRef<AbortController | null>(null);
+
+    const abortLatestTopicsRequest = () => {
+        if (!latestTopicsAbortRef.current) {
+            return;
+        }
+
+        latestTopicsAbortRef.current.abort();
+        latestTopicsAbortRef.current = null;
+    };
 
     // 从URL参数初始化状态
     useEffect(() => {
@@ -231,27 +249,34 @@ export default function LatestTopicsPage() {
 
     const fetchLatestTopics = async () => {
         const requestId = requestSeqRef.current + 1;
+        const abortController = new AbortController();
+        const signal = abortController.signal;
         const start = dateRange.start.toDate(getLocalTimeZone());
         const end = toInclusiveDateEnd(dateRange.end);
 
+        abortLatestTopicsRequest();
         requestSeqRef.current = requestId;
+        latestTopicsAbortRef.current = abortController;
         setLoading(true);
         try {
             const [startTime, endTime] = [normalizeUnixMsTimestamp(start), normalizeUnixMsTimestamp(end)];
-            const response = await getLatestTopics({
-                timeStart: startTime,
-                timeEnd: endTime,
-                page,
-                pageSize: topicsPerPage,
-                groupId: selectedGroupId || undefined,
-                filterRead,
-                filterFavorite,
-                sortByInterest,
-                search: searchText
-            });
+            const response = await getLatestTopics(
+                {
+                    timeStart: startTime,
+                    timeEnd: endTime,
+                    page,
+                    pageSize: topicsPerPage,
+                    groupId: selectedGroupId || undefined,
+                    filterRead,
+                    filterFavorite,
+                    sortByInterest,
+                    search: searchText
+                },
+                signal
+            );
             const data = getApiDataOrThrow(response, "获取最新话题");
 
-            if (requestSeqRef.current !== requestId) {
+            if (requestSeqRef.current !== requestId || signal.aborted) {
                 return;
             }
 
@@ -261,7 +286,7 @@ export default function LatestTopicsPage() {
             setFavoriteTopics(data.favoriteStatus);
             setInterestScores(data.interestScores);
         } catch (error) {
-            if (requestSeqRef.current !== requestId) {
+            if (requestSeqRef.current !== requestId || signal.aborted || isAbortError(error)) {
                 return;
             }
 
@@ -271,7 +296,11 @@ export default function LatestTopicsPage() {
                 description: `无法加载最新话题：${getErrorMessage(error)}`
             });
         } finally {
-            if (requestSeqRef.current === requestId) {
+            if (latestTopicsAbortRef.current === abortController) {
+                latestTopicsAbortRef.current = null;
+            }
+
+            if (requestSeqRef.current === requestId && !signal.aborted) {
                 setLoading(false);
             }
         }
@@ -290,7 +319,10 @@ export default function LatestTopicsPage() {
             searchText ? 300 : 0
         );
 
-        return () => window.clearTimeout(timerId);
+        return () => {
+            window.clearTimeout(timerId);
+            abortLatestTopicsRequest();
+        };
     }, [dateRange, page, topicsPerPage, selectedGroupId, filterRead, filterFavorite, sortByInterest, searchText, isInitializedFromUrl]);
 
     // 分页处理
