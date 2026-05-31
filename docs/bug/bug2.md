@@ -41,19 +41,6 @@
 - `relevance = Math.max(0, 1 - (r.distance ?? 1))` 只对 cosine 距离成立。bge-m3 向量已 L2 归一化，其 L2 距离 ∈ [0,2]，相似文本常 >1 → relevance 被 clamp 成 0。
 - topK 排序因 L2 与 cosine 对归一化向量单调一致仍正确，但对用户展示的"相关性"数值失真。系重构（旧版用 `vec_distance_cosine`，新版改隐式 MATCH k）引入的回归。类别 3/4。
 
-### H6. 兴趣度邮件 JSON.parse(contributors) 无保护，单条脏数据使整批通知丢失
-
-`applications/ai-model/src/services/email/InterestEmailService.ts:106`
-
-- `contributors` 由 `AISummarize.ts:219` 用 `JSON.stringify` 写入；若 LLM 漏返该字段则写入字面 `undefined`（见 M 组），或被截断 → `JSON.parse` 抛错 → 整封邮件失败。
-- 而 evaluation KV 在发邮件前已置 true（`LLMInterestEvaluationAndNotification.ts:135`），这些 topic 被永久标记"已评估"不再重试 → 用户永久收不到该批通知。类别 1/4。
-
-### H7. 评估完成标记早于邮件发送落库，邮件失败即永久漏通知
-
-`applications/ai-model/src/tasks/LLMInterestEvaluationAndNotification.ts:131-147,167-184`
-
-- evaluation KV 在每个 batch 内立即 `put(topicId,true)`，邮件在所有 batch 后才发；发送失败仅 warning，不回滚、不重试。下轮被"已评估"过滤掉 → 通知永久遗漏。类别 1/4。
-
 ### H8. webui getSessionTimeDurations 逐条查询（N+1）
 
 `applications/webui-backend/src/services/ChatMessageService.ts:34-48`
@@ -103,13 +90,3 @@
 
 - `applications/data-provider/src/providers/QQProvider/parsers/parseMsgContentFromPB.ts` 整文件已废弃且仅自引用（活跃解析器是 MessagePBParser）；其 V2 内 `i>0` 才追加逗号，导致 `A B, C,` 式错位拼接——但不被任何地方调用，无运行期影响，建议删除。
 - `QQProvider._getMsgIdByGroupNumberAndMsgSeq` / `_getMsgByMsgId` 未被引用（已改为直接解析 extraData）。
-
----
-
-## 六、优先级建议
-
-1. **最高**：H1 + H2（一条畸形引用消息会崩摄取并泄漏连接）、H3 + H4（并发丢摘要 + 空结果无限重跑 LLM）。这四项直接造成系统性丢数据/资源耗尽。
-2. **次高**：H5（相关性数值失真，用户可见）、H6 + H7 + M1（通知永久遗漏 + 分数 NaN）。
-3. 其余按上表择机修复。
-
-我已逐文件追踪了 QQ 数据从 nt_msg.db 解析到入库、分组、摘要、向量化、兴趣度、前端展示的完整链路；高危项均已读源码核验。本轮为只读审查，未改动任何代码。如需，我可针对某一项给出具体修复方案。
