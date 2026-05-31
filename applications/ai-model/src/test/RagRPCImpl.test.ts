@@ -89,4 +89,55 @@ describe("RagRPCImpl", () => {
         );
         expect(onChunk).not.toHaveBeenCalledWith(expect.objectContaining({ type: "done" }));
     });
+
+    it("Multi-Query 扩展失败时应降级为仅使用原始问题，不抛错中断", async () => {
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any
+        );
+
+        const failingRewriter = {
+            expandQuery: vi.fn().mockRejectedValue(new Error("Multi-Query 多次重试仍然失败"))
+        };
+
+        (rpcImpl as any).queryRewriter = failingRewriter;
+
+        const queries = await (rpcImpl as any)._expandQueriesWithFallback("原始问题");
+
+        expect(failingRewriter.expandQuery).toHaveBeenCalledWith("原始问题");
+        expect(queries).toEqual(["原始问题"]);
+    });
+
+    it("Multi-Query 扩展成功时应返回扩展后的查询列表", async () => {
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any
+        );
+
+        (rpcImpl as any).queryRewriter = {
+            expandQuery: vi.fn().mockResolvedValue(["原始问题", "扩展1", "扩展2"])
+        };
+
+        const queries = await (rpcImpl as any)._expandQueriesWithFallback("原始问题");
+
+        expect(queries).toEqual(["原始问题", "扩展1", "扩展2"]);
+    });
 });
