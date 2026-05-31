@@ -50,9 +50,12 @@ export class ReportService {
 
         const references: ReferenceItem[] = [];
 
+        // 批量取出全部 topic 摘要，避免逐 topicId 查询的 N+1 往返
+        const digestMap = await this.agcDbAccessService.getAIDigestResultsByTopicIds(topicIds);
+
         for (let i = 0; i < topicIds.length; i += 1) {
             const topicId = topicIds[i];
-            const digest = await this.agcDbAccessService.getAIDigestResultByTopicId(topicId);
+            const digest = digestMap.get(topicId);
 
             if (!digest) {
                 throw new NotFoundError(`未找到对应的话题摘要：${topicId}`);
