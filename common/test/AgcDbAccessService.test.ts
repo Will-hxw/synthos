@@ -138,6 +138,53 @@ describe("AgcDbAccessService", () => {
         expect(result[2].result.map(item => item.topicId)).toEqual(["topic-1"]);
     });
 
+    it("应批量查询多个topicId的摘要结果并返回去重映射", async () => {
+        mockCommonDBService.all.mockResolvedValue([
+            {
+                topicId: "topic-2",
+                sessionId: "session-2",
+                topic: "话题2",
+                contributors: "[]",
+                detail: "详情2",
+                modelName: "mock",
+                updateTime: 2
+            },
+            {
+                topicId: "topic-1",
+                sessionId: "session-1",
+                topic: "话题1",
+                contributors: "[]",
+                detail: "详情1",
+                modelName: "mock",
+                updateTime: 1
+            }
+        ]);
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        // 含重复 topicId，应在单条 IN 查询里去重
+        const result = await service.getAIDigestResultsByTopicIds(["topic-1", "topic-2", "topic-1"]);
+
+        expect(mockCommonDBService.all).toHaveBeenCalledTimes(1);
+        expect(mockCommonDBService.all).toHaveBeenCalledWith(
+            "SELECT * FROM ai_digest_results WHERE topicId IN (?, ?)",
+            ["topic-1", "topic-2"]
+        );
+        expect(result.size).toBe(2);
+        expect(result.get("topic-1")?.topic).toBe("话题1");
+        expect(result.get("topic-2")?.topic).toBe("话题2");
+    });
+
+    it("批量查询topicId传入空数组应直接返回空且不查库", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        const result = await service.getAIDigestResultsByTopicIds([]);
+
+        expect(result.size).toBe(0);
+        expect(mockCommonDBService.all).not.toHaveBeenCalled();
+    });
+
     it("批量存储摘要结果应使用事务", async () => {
         const service = new AgcDbAccessService();
 

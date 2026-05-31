@@ -312,6 +312,39 @@ export class AgcDbAccessService extends Disposable {
     }
 
     /**
+     * 批量获取多个 topicId 的摘要结果。
+     * 用单条 IN 查询替代逐 topicId 查询，避免报告详情等场景的 N+1 往返。
+     * 超 999 参数自动分块。
+     * @param topicIds 话题ID列表
+     * @returns topicId 到摘要结果的映射；不存在的 topicId 不会出现在 map 中
+     */
+    public async getAIDigestResultsByTopicIds(topicIds: string[]): Promise<Map<string, AIDigestResult>> {
+        const digestMap = new Map<string, AIDigestResult>();
+
+        if (topicIds.length === 0) {
+            return digestMap;
+        }
+
+        const MAX_SQLITE_PARAMS = 999;
+        const uniqueTopicIds = Array.from(new Set(topicIds));
+
+        for (let i = 0; i < uniqueTopicIds.length; i += MAX_SQLITE_PARAMS) {
+            const batch = uniqueTopicIds.slice(i, i + MAX_SQLITE_PARAMS);
+            const placeholders = batch.map(() => "?").join(", ");
+            const rows = await this.db.all<AIDigestResult>(
+                `SELECT * FROM ai_digest_results WHERE topicId IN (${placeholders})`,
+                batch
+            );
+
+            for (const row of rows) {
+                digestMap.set(row.topicId, row);
+            }
+        }
+
+        return digestMap;
+    }
+
+    /**
      * 获取指定时间范围内命中的话题记录，并附带所属会话完整时间范围、群组和兴趣分。
      * 时间过滤语义与旧页面链路一致：只要 session 内任一消息落入时间范围，就返回该 session 的全部话题。
      * @param timeStart 开始时间戳
