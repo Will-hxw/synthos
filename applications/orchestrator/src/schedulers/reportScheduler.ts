@@ -21,17 +21,27 @@ function parseTimeStr(timeStr: string): { hour: number; minute: number } {
  * @param triggerTime 触发时间
  * @param halfDailyTimes 半日报触发时间配置
  */
-function calculateHalfDailyTimeRange(
+export function calculateHalfDailyTimeRange(
     triggerTime: Date,
     halfDailyTimes: string[]
 ): { timeStart: number; timeEnd: number } {
     const sortedTimes = [...halfDailyTimes].sort();
-    const currentTimeStr = `${String(triggerTime.getHours()).padStart(2, "0")}:${String(triggerTime.getMinutes()).padStart(2, "0")}`;
+    const triggerMinutes = triggerTime.getHours() * 60 + triggerTime.getMinutes();
 
-    // 找到当前触发时间在配置中的位置
-    const currentIndex = sortedTimes.findIndex(
-        t => t === currentTimeStr || parseTimeStr(t).hour === triggerTime.getHours()
-    );
+    // 选择「分钟数不晚于触发时间」中最靠后的配置点作为当前时段右边界。
+    // 用分钟数比较而非字符串相等或仅按小时兜底：既能容忍 cron 触发的轻微延迟，
+    // 又能区分同一小时内的多个时间点（如 08:00 / 08:30），避免错配到第一个。
+    let currentIndex = -1;
+
+    for (let i = 0; i < sortedTimes.length; i++) {
+        const { hour, minute } = parseTimeStr(sortedTimes[i]);
+
+        if (hour * 60 + minute <= triggerMinutes) {
+            currentIndex = i;
+        } else {
+            break;
+        }
+    }
 
     const timeEnd = triggerTime.getTime();
     let timeStart: number;
