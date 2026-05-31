@@ -646,6 +646,98 @@ describe("QQProvider", () => {
             expect(mockLogger.warning).not.toHaveBeenCalledWith(expect.stringContaining("msgId:"));
         });
 
+        it("引用消息 extraMessage 缺失（为 null）时应跳过引用且不崩整批", async () => {
+            const mockTimestamp = 1700000000000;
+            const mockGroupId = "123456789";
+
+            const mockRow = {
+                [GMC.msgId]: "2222222222222222222",
+                [GMC.msgTime]: Math.floor(mockTimestamp / 1000),
+                [GMC.groupUin]: mockGroupId,
+                [GMC.peeruin]: mockGroupId,
+                [GMC.senderUin]: "987654321",
+                [GMC.replyMsgSeq]: 123,
+                [GMC.msgContent]: Buffer.from("mock"),
+                [GMC.msgType]: MsgType.REPLY,
+                [GMC.extraData]: Buffer.from("mock extra data"),
+                [GMC.sendMemberName]: "测试用户",
+                [GMC.sendNickName]: "测试昵称"
+            };
+
+            mockDbMethods.all.mockResolvedValueOnce([mockRow]);
+            // 第一次解析 extraData：protobufjs 对缺失子消息置 extraMessage 为 null
+            mockParserMethods.parseMessageSegment
+                .mockReturnValueOnce({
+                    extraMessage: null,
+                    messages: []
+                })
+                .mockReturnValueOnce({
+                    messages: [
+                        {
+                            messageId: "elem_1",
+                            elementType: MsgElementType.TEXT,
+                            messageText: "回复消息"
+                        }
+                    ]
+                });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            // 不应抛错；引用内容被跳过，主消息正文仍正常入库
+            expect(result).toHaveLength(1);
+            expect(result[0].quotedMsgContent).toBeUndefined();
+            expect(result[0].messageContent).toBe("回复消息");
+            expect(mockLogger.warning).toHaveBeenCalledWith("跳过 1 条引用消息内容为空的消息引用。");
+        });
+
+        it("引用消息 replyMsgSeq 为 0 时不应触发致命断言而崩整批", async () => {
+            const mockTimestamp = 1700000000000;
+            const mockGroupId = "123456789";
+
+            const mockRow = {
+                [GMC.msgId]: "2222222222222222222",
+                [GMC.msgTime]: Math.floor(mockTimestamp / 1000),
+                [GMC.groupUin]: mockGroupId,
+                [GMC.peeruin]: mockGroupId,
+                [GMC.senderUin]: "987654321",
+                [GMC.replyMsgSeq]: 0,
+                [GMC.msgContent]: Buffer.from("mock"),
+                [GMC.msgType]: MsgType.REPLY,
+                [GMC.extraData]: Buffer.from("mock extra data"),
+                [GMC.sendMemberName]: "测试用户",
+                [GMC.sendNickName]: "测试昵称"
+            };
+
+            mockDbMethods.all.mockResolvedValueOnce([mockRow]);
+            mockParserMethods.parseMessageSegment
+                .mockReturnValueOnce({
+                    extraMessage: {
+                        messages: [
+                            {
+                                messageId: "quoted_elem_1",
+                                elementType: MsgElementType.TEXT,
+                                messageText: "被引用内容"
+                            }
+                        ]
+                    },
+                    messages: []
+                })
+                .mockReturnValueOnce({
+                    messages: [
+                        {
+                            messageId: "elem_1",
+                            elementType: MsgElementType.TEXT,
+                            messageText: "回复消息"
+                        }
+                    ]
+                });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("回复消息");
+        });
+
         it("非引用消息时 quotedMsgContent 应为 undefined", async () => {
             const mockTimestamp = 1700000000000;
             const mockGroupId = "123456789";
