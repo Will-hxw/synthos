@@ -182,6 +182,19 @@ export class LLMInterestEvaluationAndNotificationTaskHandler {
                             }
                         } else if (emailSendResult === "failed") {
                             this.LOGGER.warning("邮件通知发送失败");
+
+                            // 评估标记已在评估阶段写入，若不回滚，这些感兴趣话题下轮会被
+                            // “已评估”过滤掉、不再进入 interestedTopics，导致邮件失败后永久漏通知。
+                            // 回滚本批待通知话题的评估标记，使其下轮重新评估并重试通知。
+                            for (const topic of unnotifiedTopics) {
+                                try {
+                                    await evaluationKVStore.del(topic.topicId);
+                                } catch (error) {
+                                    this.LOGGER.error(
+                                        `回滚评估标记失败: topicId=${topic.topicId}, error=${error}`
+                                    );
+                                }
+                            }
                         } else {
                             this.LOGGER.info("邮件通知已跳过");
                         }

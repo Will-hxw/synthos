@@ -90,6 +90,34 @@ class InterestEmailService {
     }
 
     /**
+     * 安全解析话题贡献者字段。
+     * contributors 由摘要阶段以 JSON.stringify 写入，但历史脏数据可能是字面 "undefined"、
+     * 非法 JSON 或非数组，直接 JSON.parse 会抛错并使整封邮件构建失败、进而让本批话题永久漏通知。
+     * 这里容错降级为字符串数组，无法解析时返回空数组。
+     * @param contributors 贡献者字段原始值
+     * @returns 贡献者名称数组
+     */
+    private _parseContributors(contributors: string | undefined | null): string[] {
+        if (!contributors) {
+            return [];
+        }
+
+        try {
+            const parsed = JSON.parse(contributors);
+
+            if (!Array.isArray(parsed)) {
+                return [];
+            }
+
+            return parsed.map(item => String(item));
+        } catch {
+            this.LOGGER.warning(`解析 contributors 失败，按空处理: ${contributors}`);
+
+            return [];
+        }
+    }
+
+    /**
      * 构建邮件 HTML 内容
      * @param topics 感兴趣的话题列表
      * @returns HTML 格式的邮件内容
@@ -103,7 +131,7 @@ class InterestEmailService {
                 <div class="topic-content">
                     <h3 class="topic-title">${this.emailService.escapeHtml(topic.topic)}</h3>
                     <div class="topic-contributors">
-                        <strong>主要参与者：</strong>${this.emailService.escapeHtml(JSON.parse(topic.contributors).join("、"))}
+                        <strong>主要参与者：</strong>${this.emailService.escapeHtml(this._parseContributors(topic.contributors).join("、"))}
                     </div>
                     <div class="topic-detail">${this.emailService.escapeHtml(topic.detail)}</div>
                 </div>
