@@ -19,6 +19,21 @@ type SseMessage = {
     data: string;
 };
 
+/**
+ * Agent 流式请求错误。带 status/code 以便调用方区分并发拒绝(409)与真实网络错误。
+ */
+export class AgentStreamError extends Error {
+    public readonly status?: number;
+    public readonly code?: string;
+
+    constructor(message: string, options?: { status?: number; code?: string }) {
+        super(message);
+        this.name = "AgentStreamError";
+        this.status = options?.status;
+        this.code = options?.code;
+    }
+}
+
 function _parseSseBlock(block: string): SseMessage | null {
     // 参考 SSE 规范：按空行分隔 event/data
     const lines = block.split("\n");
@@ -166,6 +181,7 @@ export const agentAskStream = async (
 
     if (!response.ok) {
         let errorMsg = `请求失败: ${response.status}`;
+        let code: string | undefined;
 
         try {
             const json = (await response.json()) as any;
@@ -173,11 +189,14 @@ export const agentAskStream = async (
             if (json && typeof json.error === "string") {
                 errorMsg = json.error;
             }
+            if (json && typeof json.code === "string") {
+                code = json.code;
+            }
         } catch {
             // ignore
         }
 
-        throw new Error(errorMsg);
+        throw new AgentStreamError(errorMsg, { status: response.status, code });
     }
 
     await _consumeSse(response, {

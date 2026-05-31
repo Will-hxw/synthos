@@ -56,6 +56,7 @@ export class AgentController {
         if (!this.agentService.tryAcquireConversationLock(conversationId)) {
             res.status(409).json({
                 success: false,
+                code: "CONVERSATION_RUNNING",
                 error: "该对话正在运行中，请等待当前请求完成"
             });
 
@@ -87,6 +88,15 @@ export class AgentController {
         }, 15000);
 
         const abortController = new AbortController();
+
+        // 整体超时兜底：LLM/工具链路若长时间挂起，定时中止并释放对话锁，
+        // 避免 finally 永不触发导致 conversationId 锁泄漏、该对话再也无法发起新请求。
+        let timedOut = false;
+        const STREAM_TIMEOUT_MS = 5 * 60 * 1000;
+        const timeoutTimer = setTimeout(() => {
+            timedOut = true;
+            abortController.abort();
+        }, STREAM_TIMEOUT_MS);
 
         const writeEvent = (event: string, data: unknown) => {
             if (res.writableEnded) {
@@ -126,7 +136,11 @@ export class AgentController {
                 }
             );
         } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
+            const msg = timedOut
+                ? `处理超时（超过 ${Math.round(STREAM_TIMEOUT_MS / 1000)} 秒），已自动中止`
+                : e instanceof Error
+                  ? e.message
+                  : String(e);
 
             writeEvent("error", {
                 type: "error",
@@ -136,6 +150,7 @@ export class AgentController {
             });
             res.end();
         } finally {
+            clearTimeout(timeoutTimer);
             clearInterval(heartbeatTimer);
             this.agentService.releaseConversationLock(conversationId);
         }

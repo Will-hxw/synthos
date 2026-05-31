@@ -7,7 +7,7 @@ import { Button, Spinner, Textarea, Card, CardBody, Chip, Tooltip, cn } from "@h
 import { Send, Bot, User, Wrench, Square } from "lucide-react";
 import { motion } from "framer-motion";
 
-import { AgentEvent, AgentMessage, agentAskStream, getAgentMessages } from "@/api/agentApi";
+import { AgentEvent, AgentMessage, AgentStreamError, agentAskStream, getAgentMessages } from "@/api/agentApi";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 
 interface AgentChatProps {
@@ -420,6 +420,11 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                 }
 
                 console.error("Agent SSE 出错:", err);
+
+                // 并发拒绝(409)不是网络错误，给出明确文案
+                const isConversationRunning = err instanceof AgentStreamError && (err.status === 409 || err.code === "CONVERSATION_RUNNING");
+                const content = isConversationRunning ? `${err.message}` : `网络错误: ${err instanceof Error ? err.message : String(err)}`;
+
                 setMessages(prev =>
                     prev.map(m => {
                         if (m.id !== assistantTempId) {
@@ -428,7 +433,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
 
                         return {
                             ...m,
-                            content: `网络错误: ${err instanceof Error ? err.message : String(err)}`
+                            content
                         };
                     })
                 );
