@@ -46,14 +46,43 @@ describe("TextGeneratorService", () => {
     });
 
     it("JSON 校验场景应剥离完整包裹的 JSON 代码围栏", async () => {
-        vi.spyOn(service as any, "doGenerateTextStream").mockResolvedValue('```json\n{"ok":true}\n```');
+        vi.spyOn(service as any, "doGenerateTextStream").mockResolvedValue('```json\n[{"ok":true}]\n```');
 
         const result = await service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true);
 
         expect(result).toEqual({
             selectedModelName: "mock-model",
-            content: '{"ok":true}'
+            content: '[{"ok":true}]'
         });
+    });
+
+    it("JSON 校验场景下合法但非数组的对象应触发修复（{} / {error}）", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        // 第一次返回合法 JSON 对象（旧实现会误判通过），修复后返回期望的数组
+        doGenerateTextStream
+            .mockResolvedValueOnce('{"error":"无法生成"}')
+            .mockResolvedValueOnce('[{"topic":"话题","detail":"内容"}]');
+
+        const result = await service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true);
+
+        expect(result).toEqual({
+            selectedModelName: "mock-model",
+            content: '[{"topic":"话题","detail":"内容"}]'
+        });
+        // 第二次调用是修复请求，证明对象未被直接当作合法结果
+        expect(doGenerateTextStream).toHaveBeenCalledTimes(2);
+    });
+
+    it("JSON 校验场景下 null / 字符串等非数组 JSON 应被判为非法", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        // null 是合法 JSON 但非数组，修复仍返回 null → 换下一个模型，最终全失败
+        doGenerateTextStream.mockResolvedValue("null");
+
+        await expect(service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true)).rejects.toThrow(
+            "所有模型都生成摘要失败"
+        );
     });
 
     it("非 JSON 场景应保留回答中的代码块", async () => {
@@ -82,7 +111,7 @@ describe("TextGeneratorService", () => {
 
         doGenerateTextStream
             .mockResolvedValueOnce("The request is not valid")
-            .mockResolvedValueOnce('{"ok":true}');
+            .mockResolvedValueOnce('[{"ok":true}]');
 
         const result = await service.generateTextWithModelCandidates(
             ["bad-model", "good-model"],
@@ -92,14 +121,14 @@ describe("TextGeneratorService", () => {
 
         expect(result).toEqual({
             selectedModelName: "good-model",
-            content: '{"ok":true}'
+            content: '[{"ok":true}]'
         });
     });
 
     it("候选模型单次失败应记录 warning 而不是 error", async () => {
         const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
 
-        doGenerateTextStream.mockResolvedValueOnce("").mockResolvedValueOnce('{"ok":true}');
+        doGenerateTextStream.mockResolvedValueOnce("").mockResolvedValueOnce('[{"ok":true}]');
 
         const result = await service.generateTextWithModelCandidates(
             ["bad-model", "good-model"],
@@ -109,7 +138,7 @@ describe("TextGeneratorService", () => {
 
         expect(result).toEqual({
             selectedModelName: "good-model",
-            content: '{"ok":true}'
+            content: '[{"ok":true}]'
         });
         expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("模型 bad-model 生成摘要失败"));
         expect(mockLogger.error).not.toHaveBeenCalled();

@@ -234,14 +234,21 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
-     * 校验并规范化模型返回的 JSON 内容
+     * 校验并规范化模型返回的 JSON 内容。
+     * checkJsonFormat 场景下游（摘要任务）按数组遍历结果，因此这里不仅要求可被 JSON.parse，
+     * 还要求解析结果是数组：`{}`、`{"error":...}`、`null`、字符串等虽是合法 JSON 但不符合契约，
+     * 必须判为非法以触发 JSON 修复重试，避免脏数据/空写流入下游。
      * @param content 模型返回内容
-     * @returns 可被 JSON.parse 解析的 JSON 字符串
+     * @returns 可被 JSON.parse 解析且为数组的 JSON 字符串
      */
     private _validateJsonResult(content: string): string {
         const validatedResultStr = this._stripJsonCodeFence(content);
 
-        JSON.parse(validatedResultStr);
+        const parsed = JSON.parse(validatedResultStr);
+
+        if (!Array.isArray(parsed)) {
+            throw new Error(`期望 JSON 数组，实际为 ${parsed === null ? "null" : typeof parsed}`);
+        }
 
         return validatedResultStr;
     }
