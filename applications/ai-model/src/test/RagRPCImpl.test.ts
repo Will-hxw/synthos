@@ -89,4 +89,51 @@ describe("RagRPCImpl", () => {
         );
         expect(onChunk).not.toHaveBeenCalledWith(expect.objectContaining({ type: "done" }));
     });
+
+    it("search 应批量获取话题摘要而非逐条查询", async () => {
+        const embeddingService = {
+            embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3])
+        };
+        const vectorDB = {
+            searchSimilar: vi.fn().mockReturnValue([
+                { topicId: "topic-1", distance: 0.1 },
+                { topicId: "topic-2", distance: 0.2 },
+                { topicId: "missing", distance: 0.3 }
+            ])
+        };
+        const getAIDigestResultsByTopicIds = vi.fn().mockResolvedValue(
+            new Map([
+                ["topic-1", { topic: "话题1", detail: "详情1", contributors: "[]" }],
+                ["topic-2", { topic: "话题2", detail: "详情2", contributors: "[]" }]
+            ])
+        );
+        const agcDB = {
+            getAIDigestResultsByTopicIds,
+            getAIDigestResultByTopicId: vi.fn()
+        };
+
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            vectorDB as any,
+            agcDB as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            embeddingService as any,
+            {} as any,
+            {} as any,
+            {} as any
+        );
+
+        const output = await rpcImpl.search({ query: "测试", limit: 10 });
+
+        // 只调用一次批量查询，不再逐条 await
+        expect(getAIDigestResultsByTopicIds).toHaveBeenCalledTimes(1);
+        expect(getAIDigestResultsByTopicIds).toHaveBeenCalledWith(["topic-1", "topic-2", "missing"]);
+        expect(agcDB.getAIDigestResultByTopicId).not.toHaveBeenCalled();
+        // 无摘要的 topic 被过滤掉
+        expect(output.map(r => r.topicId)).toEqual(["topic-1", "topic-2"]);
+        expect(output[0]).toMatchObject({ topicId: "topic-1", topic: "话题1", distance: 0.1 });
+    });
 });

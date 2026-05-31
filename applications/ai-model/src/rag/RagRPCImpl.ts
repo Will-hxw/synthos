@@ -100,11 +100,12 @@ export class RagRPCImpl implements RAGRPCImplementation {
 
         this.LOGGER.debug(`向量搜索完成，找到 ${results.length} 条结果`);
 
-        // 3. 获取完整的话题信息
+        // 3. 批量获取完整的话题信息，避免逐条 await 的 N+1 往返
+        const digestMap = await this.agcDB.getAIDigestResultsByTopicIds(results.map(r => r.topicId));
         const output: SearchOutput = [];
 
         for (const result of results) {
-            const digest = await this.agcDB.getAIDigestResultByTopicId(result.topicId);
+            const digest = digestMap.get(result.topicId);
 
             if (digest) {
                 output.push({
@@ -138,15 +139,12 @@ export class RagRPCImpl implements RAGRPCImplementation {
 
             this.LOGGER.info(`Multi-Query 扩展完成，共 ${expandedQueries.length} 个查询`);
 
-            // 2. 对每个扩展查询进行搜索
-            const allResults: SearchOutput = [];
+            // 2. 对每个扩展查询并发搜索（各查询相互独立，串行会线性放大首字延迟）
+            const resultsPerQuery = await Promise.all(
+                expandedQueries.map(query => this.search({ query, limit: input.topK }))
+            );
+            const allResults: SearchOutput = resultsPerQuery.flat();
 
-            for (const query of expandedQueries) {
-                this.LOGGER.debug(`执行查询: "${query}"`);
-                const results = await this.search({ query, limit: input.topK });
-
-                allResults.push(...results);
-            }
             this.LOGGER.info(`Multi-Query 搜索完成，共获取 ${allResults.length} 条原始结果`);
 
             // 3. 文档去重（基于 topicId）
@@ -219,14 +217,11 @@ export class RagRPCImpl implements RAGRPCImplementation {
 
                 this.LOGGER.debug(`Multi-Query 扩展完成，共 ${expandedQueries.length} 个查询`);
 
-                // 2. 对每个扩展查询进行搜索
-                const allResults: SearchOutput = [];
-
-                for (const query of expandedQueries) {
-                    const results = await this.search({ query, limit: input.topK });
-
-                    allResults.push(...results);
-                }
+                // 2. 对每个扩展查询并发搜索（各查询相互独立，串行会线性放大首字延迟）
+                const resultsPerQuery = await Promise.all(
+                    expandedQueries.map(query => this.search({ query, limit: input.topK }))
+                );
+                const allResults: SearchOutput = resultsPerQuery.flat();
 
                 // 3. 文档去重
                 deduplicatedResults = this.deduplicateResults(allResults);
