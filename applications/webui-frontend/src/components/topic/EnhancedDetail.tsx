@@ -19,13 +19,14 @@ const EnhancedDetail: React.FC<EnhancedDetailProps> = ({ detail, contributors })
 
         // 转义特殊字符并创建正则表达式来匹配参与者名称
         const escapedNames = names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-        const nameRegex = new RegExp(`(${escapedNames.join("|")})`, "g");
+        // 无参与者时不做名称切分：空 names 会让正则退化为 /()/g 触发大量空匹配，长正文上无谓开销
+        const nameRegex = escapedNames.length > 0 ? new RegExp(`(${escapedNames.join("|")})`, "g") : null;
 
         // 创建正则表达式来匹配URL链接
         const urlRegex = /((?:https?|ftp):\/\/[^\s\u0080-\uFFFF]+)/gi;
 
         // 先分割文本为名称和非名称部分
-        const nameParts = text.split(nameRegex);
+        const nameParts = nameRegex ? text.split(nameRegex) : [text];
 
         // 对每个部分进一步处理链接
         const finalParts: React.ReactNode[] = [];

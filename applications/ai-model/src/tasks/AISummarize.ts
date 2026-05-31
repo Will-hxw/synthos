@@ -305,7 +305,11 @@ export class AISummarizeTaskHandler {
             return;
         }
 
-        const sessionEndTime = Math.max(...sessionMessages.map(msg => msg.timestamp));
+        // session 消息可能很多，用 reduce 取最大时间戳，避免 Math.max(...arr) 大数组展开触发 RangeError
+        const sessionEndTime = sessionMessages.reduce(
+            (max, msg) => (msg.timestamp > max ? msg.timestamp : max),
+            sessionMessages[0].timestamp
+        );
 
         if (sessionEndTime > readyBeforeTimestamp) {
             this.LOGGER.info(`session ${sessionId} 距离任务结束时间过近，延迟到后续任务处理`);
