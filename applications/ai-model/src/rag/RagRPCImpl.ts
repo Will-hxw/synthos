@@ -133,8 +133,8 @@ export class RagRPCImpl implements RAGRPCImplementation {
         let deduplicatedResults: SearchOutput;
 
         if (input.enableQueryRewriter) {
-            // 1. 使用 Multi-Query 扩展原始问题
-            const expandedQueries = await this.queryRewriter.expandQuery(input.question);
+            // 1. 使用 Multi-Query 扩展原始问题（失败时降级为仅用原始问题，不中断问答）
+            const expandedQueries = await this._expandQueriesWithFallback(input.question);
 
             this.LOGGER.info(`Multi-Query 扩展完成，共 ${expandedQueries.length} 个查询`);
 
@@ -214,8 +214,8 @@ export class RagRPCImpl implements RAGRPCImplementation {
             let deduplicatedResults: SearchOutput;
 
             if (input.enableQueryRewriter) {
-                // 1. 使用 Multi-Query 扩展原始问题
-                const expandedQueries = await this.queryRewriter.expandQuery(input.question);
+                // 1. 使用 Multi-Query 扩展原始问题（失败时降级为仅用原始问题，不中断问答）
+                const expandedQueries = await this._expandQueriesWithFallback(input.question);
 
                 this.LOGGER.debug(`Multi-Query 扩展完成，共 ${expandedQueries.length} 个查询`);
 
@@ -442,6 +442,25 @@ export class RagRPCImpl implements RAGRPCImplementation {
         );
 
         return messages;
+    }
+
+    /**
+     * 扩展查询，失败时降级为仅使用原始问题。
+     * Multi-Query 是召回增强的可选优化，重写失败不应中断整个问答；
+     * 此时退回到单查询检索，保证基础检索仍可用。
+     * @param question 用户原始问题
+     * @returns 扩展查询列表；重写失败时为 [question]
+     */
+    private async _expandQueriesWithFallback(question: string): Promise<string[]> {
+        try {
+            return await this.queryRewriter.expandQuery(question);
+        } catch (error) {
+            this.LOGGER.warning(
+                `Multi-Query 扩展失败，降级为仅使用原始问题检索：${error instanceof Error ? error.message : String(error)}`
+            );
+
+            return [question];
+        }
     }
 
     /**
