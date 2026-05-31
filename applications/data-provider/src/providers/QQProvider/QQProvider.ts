@@ -5,7 +5,7 @@ import { RawChatMessage } from "@root/common/contracts/data-provider/index";
 import Logger from "@root/common/util/Logger";
 import { PromisifiedSQLite } from "@root/common/util/promisify/PromisifiedSQLite";
 import ErrorReasons from "@root/common/contracts/ErrorReasons";
-import { ASSERT } from "@root/common/util/ASSERT";
+import { ASSERT_NOT_FATAL } from "@root/common/util/ASSERT";
 import { Disposable } from "@root/common/util/lifecycle/Disposable";
 import { mustInitBeforeUse } from "@root/common/util/lifecycle/mustInitBeforeUse";
 import sqlite3 from "@journeyapps/sqlcipher";
@@ -537,11 +537,25 @@ export class QQProvider extends Disposable implements IIMProvider {
                 // 处理引用消息，首先尝试获取被引用消息的消息正文而不是id，减少一次开销极大的数据库查询，极大提升性能
                 if (result[GMC.msgType] === MsgType.REPLY) {
                     this.LOGGER.debug(`这是一条引用消息！`);
-                    ASSERT(!!result[GMC.replyMsgSeq], "MsgType为REPLY时，对应的replyMsgSeq应该也是有效的");
+                    // replyMsgSeq 为 0/缺失属于异常数据，但不应终止整批摄取，仅记录后按普通消息处理
+                    ASSERT_NOT_FATAL(
+                        !!result[GMC.replyMsgSeq],
+                        "MsgType为REPLY时，对应的replyMsgSeq应该也是有效的"
+                    );
                     try {
-                        const quotedMsgContent = await this._parseMessageContent(
-                            this.messagePBParser.parseMessageSegment(result[GMC.extraData]).extraMessage.messages
-                        );
+                        // protobufjs toObject(defaults:true) 对缺失的 message 字段置为 null，
+                        // 当 extraData 能解码但不含 extraMessage 子消息时，直接取 .messages 会抛 TypeError，
+                        // 这里显式判空并归类为空引用内容，避免一条坏数据冒泡崩整批摄取。
+                        const extraMessage = this.messagePBParser.parseMessageSegment(
+                            result[GMC.extraData]
+                        ).extraMessage;
+
+                        if (!extraMessage || !extraMessage.messages) {
+                            skippedEmptyQuotedContentCount++;
+                            throw ErrorReasons.EMPTY_VALUE_ERROR;
+                        }
+
+                        const quotedMsgContent = await this._parseMessageContent(extraMessage.messages);
 
                         if (!quotedMsgContent) {
                             skippedEmptyQuotedContentCount++;

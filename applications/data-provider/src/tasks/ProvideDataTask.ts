@@ -63,33 +63,38 @@ export class ProvideDataTaskHandler {
                 await activeProvider.init();
                 this.LOGGER.info(`IM provider initialized for ${attrs.IMType}`);
 
-                for (const groupId of attrs.groupIds) {
-                    this.LOGGER.debug(`开始获取群 ${groupId} 的消息`);
+                try {
+                    for (const groupId of attrs.groupIds) {
+                        this.LOGGER.debug(`开始获取群 ${groupId} 的消息`);
 
-                    let results = [];
+                        let results = [];
 
-                    if (attrs.startTimeStamp < 0) {
-                        const newestMsg = await this.imDbAccessService.getNewestRawChatMessageByGroupId(groupId);
-                        const startTimeStamp = newestMsg ? newestMsg.timestamp - 1000 : 0; // 如果数据库中没有消息，则从时间戳0开始获取
+                        if (attrs.startTimeStamp < 0) {
+                            const newestMsg =
+                                await this.imDbAccessService.getNewestRawChatMessageByGroupId(groupId);
+                            const startTimeStamp = newestMsg ? newestMsg.timestamp - 1000 : 0; // 如果数据库中没有消息，则从时间戳0开始获取
 
-                        results = await activeProvider.getMsgByTimeRange(
-                            startTimeStamp,
-                            attrs.endTimeStamp,
-                            groupId
-                        );
-                    } else {
-                        results = await activeProvider.getMsgByTimeRange(
-                            attrs.startTimeStamp,
-                            attrs.endTimeStamp,
-                            groupId
-                        );
+                            results = await activeProvider.getMsgByTimeRange(
+                                startTimeStamp,
+                                attrs.endTimeStamp,
+                                groupId
+                            );
+                        } else {
+                            results = await activeProvider.getMsgByTimeRange(
+                                attrs.startTimeStamp,
+                                attrs.endTimeStamp,
+                                groupId
+                            );
+                        }
+
+                        this.LOGGER.success(`群 ${groupId} 成功获取到 ${results.length} 条有效消息`);
+                        await this.imDbAccessService.storeRawChatMessages(results);
+                        await job.touch(); // 保证任务存活
                     }
-
-                    this.LOGGER.success(`群 ${groupId} 成功获取到 ${results.length} 条有效消息`);
-                    await this.imDbAccessService.storeRawChatMessages(results);
-                    await job.touch(); // 保证任务存活
+                } finally {
+                    // 无论循环中途是否抛错，都必须释放 provider 打开的（加密）数据库连接，避免句柄泄漏
+                    await activeProvider.dispose();
                 }
-                await activeProvider.dispose();
 
                 this.LOGGER.success(`🥳任务完成: ${job.attrs.name}`);
             },
