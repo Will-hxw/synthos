@@ -7,6 +7,7 @@ const {
     mockAgendaDefine,
     mockAgendaSave,
     mockAgendaUnique,
+    mockEvaluationDel,
     mockEvaluationPut,
     mockKVDispose,
     mockKVGet,
@@ -21,6 +22,7 @@ const {
         mockAgendaDefine: vi.fn(),
         mockAgendaSave: save,
         mockAgendaUnique: unique,
+        mockEvaluationDel: vi.fn().mockResolvedValue(undefined),
         mockEvaluationPut: vi.fn().mockResolvedValue(undefined),
         mockKVDispose: vi.fn().mockResolvedValue(undefined),
         mockKVGet: vi.fn().mockResolvedValue(undefined),
@@ -66,6 +68,12 @@ vi.mock("@root/common/util/KVStore", () => ({
                 await mockNotificationPut(key, value);
             } else {
                 await mockEvaluationPut(key, value);
+            }
+        }
+
+        public async del(key: string): Promise<void> {
+            if (!this.isNotificationStore) {
+                await mockEvaluationDel(key);
             }
         }
 
@@ -167,5 +175,72 @@ describe("LLMInterestEvaluationAndNotificationTaskHandler", () => {
         expect(mockNotificationPut).not.toHaveBeenCalled();
         expect(mockLogger.info).toHaveBeenCalledWith("邮件通知已跳过");
         expect(mockLogger.warning).not.toHaveBeenCalledWith("邮件通知发送失败");
+    });
+
+    it("邮件发送失败时应回滚本批评估标记，以便下轮重试通知", async () => {
+        mockInterestEmailService.sendInterestTopicsEmail.mockResolvedValue("failed");
+
+        const handler = new LLMInterestEvaluationAndNotificationTaskHandler(
+            mockConfigManagerService as any,
+            mockImDbAccessService as any,
+            mockAgcDbAccessService as any,
+            mockTextGeneratorService as any,
+            mockInterestEmailService as any
+        );
+
+        vi.spyOn(handler as any, "_evaluateTopicsBatch").mockResolvedValue([true]);
+
+        await handler.register();
+        const processor = mockAgendaDefine.mock.calls[0][1] as (job: any) => Promise<void>;
+
+        await processor({
+            attrs: {
+                name: "LLMInterestEvaluationAndNotification",
+                data: {
+                    startTimeStamp: 1,
+                    endTimeStamp: 2
+                }
+            },
+            touch: vi.fn().mockResolvedValue(undefined)
+        });
+
+        expect(mockInterestEmailService.sendInterestTopicsEmail).toHaveBeenCalledOnce();
+        expect(mockEvaluationPut).toHaveBeenCalledWith("topic-1", true);
+        // 失败时不写通知 KV，并回滚评估标记
+        expect(mockNotificationPut).not.toHaveBeenCalled();
+        expect(mockEvaluationDel).toHaveBeenCalledWith("topic-1");
+        expect(mockLogger.warning).toHaveBeenCalledWith("邮件通知发送失败");
+    });
+
+    it("邮件发送成功时应写入通知 KV 且不回滚评估标记", async () => {
+        mockInterestEmailService.sendInterestTopicsEmail.mockResolvedValue("sent");
+
+        const handler = new LLMInterestEvaluationAndNotificationTaskHandler(
+            mockConfigManagerService as any,
+            mockImDbAccessService as any,
+            mockAgcDbAccessService as any,
+            mockTextGeneratorService as any,
+            mockInterestEmailService as any
+        );
+
+        vi.spyOn(handler as any, "_evaluateTopicsBatch").mockResolvedValue([true]);
+
+        await handler.register();
+        const processor = mockAgendaDefine.mock.calls[0][1] as (job: any) => Promise<void>;
+
+        await processor({
+            attrs: {
+                name: "LLMInterestEvaluationAndNotification",
+                data: {
+                    startTimeStamp: 1,
+                    endTimeStamp: 2
+                }
+            },
+            touch: vi.fn().mockResolvedValue(undefined)
+        });
+
+        expect(mockNotificationPut).toHaveBeenCalledWith("topic-1", true);
+        expect(mockEvaluationDel).not.toHaveBeenCalled();
+        expect(mockLogger.success).toHaveBeenCalledWith("邮件通知发送成功");
     });
 });
