@@ -1,6 +1,6 @@
 import type { GroupDetailsRecord, GroupListItem, MessageHourlyStatsData } from "@/types/index";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, SortDescriptor } from "@heroui/table";
@@ -8,17 +8,16 @@ import { Chip } from "@heroui/chip";
 import { Spinner } from "@heroui/spinner";
 import { Tooltip } from "@heroui/react";
 import { TrendingDown, TrendingUp } from "lucide-react";
-import type { EChartsType } from "echarts/core";
-import { init, use } from "echarts/core";
-import { LineChart } from "echarts/charts";
-import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
-import { CanvasRenderer } from "echarts/renderers";
 
 import { getGroupDetails, getMessageHourlyStats } from "@/api/basicApi";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
+import MessageTrendChart from "@/components/MessageTrendChart";
 
-use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
+interface HourlyTrend {
+    current: number[];
+    previous: number[];
+}
 
 export default function GroupsPage() {
     const [groups, setGroups] = useState<GroupDetailsRecord>({});
@@ -32,17 +31,10 @@ export default function GroupsPage() {
         column: "messageCount",
         direction: "descending"
     });
-    const totalChartRef = useRef<HTMLDivElement | null>(null);
-    const totalChartInstance = useRef<EChartsType | null>(null);
-    const chartRefs = useRef<Record<string, HTMLDivElement | null>>({});
-    const chartInstances = useRef<Record<string, EChartsType | null>>({});
-
-    // 获取小时格式化时间
-    const formatHour = (timestamp: number) => {
-        const date = new Date(timestamp);
-
-        return `${date.getHours()}:00`;
-    };
+    // 走势图数据存入 state，由 MessageTrendChart 组件声明式渲染（替代命令式 init/dispose）
+    const [groupHourlyTrends, setGroupHourlyTrends] = useState<Record<string, HourlyTrend>>({});
+    const [totalHourlyTrend, setTotalHourlyTrend] = useState<HourlyTrend>({ current: [], previous: [] });
+    const [chartTimestamps, setChartTimestamps] = useState<number[]>([]);
 
     // 渲染“较昨日”涨跌幅（上涨红色、下跌绿色）
     const renderDayOverDayChange = (currentCount: number, previousCount: number) => {
@@ -78,154 +70,6 @@ export default function GroupsPage() {
         );
     };
 
-    // 渲染消息量走势图表（包含当前24小时和前一天24小时）
-    const renderMessageTrendChart = (groupId: string, currentHourlyData: number[], previousHourlyData: number[], timestamps: number[]) => {
-        const chartRef = chartRefs.current[groupId];
-
-        if (chartRef) {
-            // 如果图表实例已存在，先销毁
-            if (chartInstances.current[groupId]) {
-                chartInstances.current[groupId]?.dispose();
-            }
-
-            // 初始化图表实例
-            const chartInstance = init(chartRef);
-
-            chartInstances.current[groupId] = chartInstance;
-
-            // 生成X轴标签
-            const xLabels = timestamps.map(formatHour);
-
-            // 图表配置
-            const option = {
-                tooltip: {
-                    trigger: "axis"
-                },
-                legend: {
-                    show: false
-                },
-                xAxis: {
-                    type: "category",
-                    data: xLabels,
-                    axisLabel: {
-                        rotate: 45,
-                        fontSize: 10
-                    }
-                },
-                yAxis: {
-                    type: "value"
-                },
-                series: [
-                    {
-                        name: "前一天",
-                        data: previousHourlyData,
-                        type: "line",
-                        smooth: true,
-                        lineStyle: {
-                            color: "#9CA3AF"
-                        },
-                        itemStyle: {
-                            color: "#9CA3AF"
-                        },
-                        areaStyle: {
-                            color: "rgba(156, 163, 175, 0.2)"
-                        }
-                    },
-                    {
-                        name: "当前24小时",
-                        data: currentHourlyData,
-                        type: "line",
-                        smooth: true,
-                        areaStyle: {}
-                    }
-                ],
-                grid: {
-                    left: "10%",
-                    right: "10%",
-                    top: "10%",
-                    bottom: "20%"
-                }
-            };
-
-            // 设置图表配置
-            chartInstance.setOption(option);
-        }
-    };
-
-    // 渲染总计消息量走势图表（包含当前24小时和前一天24小时）
-    const renderTotalMessageTrendChart = (currentHourlyData: number[], previousHourlyData: number[], timestamps: number[]) => {
-        const chartRef = totalChartRef.current;
-
-        if (chartRef) {
-            // 如果图表实例已存在，先销毁
-            if (totalChartInstance.current) {
-                totalChartInstance.current?.dispose();
-            }
-
-            // 初始化图表实例
-            const chartInstance = init(chartRef);
-
-            totalChartInstance.current = chartInstance;
-
-            // 生成X轴标签
-            const xLabels = timestamps.map(formatHour);
-
-            // 图表配置
-            const option = {
-                tooltip: {
-                    trigger: "axis"
-                },
-                legend: {
-                    show: false
-                },
-                xAxis: {
-                    type: "category",
-                    data: xLabels,
-                    axisLabel: {
-                        rotate: 45,
-                        fontSize: 10
-                    }
-                },
-                yAxis: {
-                    type: "value"
-                },
-                series: [
-                    {
-                        name: "前一天",
-                        data: previousHourlyData,
-                        type: "line",
-                        smooth: true,
-                        lineStyle: {
-                            color: "#9CA3AF"
-                        },
-                        itemStyle: {
-                            color: "#9CA3AF"
-                        },
-                        areaStyle: {
-                            color: "rgba(156, 163, 175, 0.2)"
-                        }
-                    },
-                    {
-                        name: "当前24小时",
-                        data: currentHourlyData,
-                        type: "line",
-                        smooth: true,
-                        areaStyle: {}
-                    }
-                ],
-                grid: {
-                    left: "10%",
-                    right: "10%",
-                    top: "10%",
-                    bottom: "20%"
-                }
-            };
-
-            // 设置图表配置
-            chartInstance.setOption(option);
-        }
-    };
-
     // 获取消息统计
     const fetchMessageHourlyStats = async (groupIds: string[]) => {
         try {
@@ -259,6 +103,7 @@ export default function GroupsPage() {
                 // 计算总计的每小时数据
                 const totalCurrentHourly = new Array(24).fill(0);
                 const totalPreviousHourly = new Array(24).fill(0);
+                const perGroupTrends: Record<string, HourlyTrend> = {};
 
                 for (const groupId of groupIds) {
                     const groupData = statsData.data[groupId];
@@ -270,24 +115,14 @@ export default function GroupsPage() {
                         groupData.previous.forEach((count, index) => {
                             totalPreviousHourly[index] += count;
                         });
+                        perGroupTrends[groupId] = { current: groupData.current, previous: groupData.previous };
                     }
                 }
 
-                // 在数据加载完成后渲染图表
-                setTimeout(() => {
-                    // 渲染总计图表
-                    renderTotalMessageTrendChart(totalCurrentHourly, totalPreviousHourly, statsData.timestamps.current);
-
-                    // 渲染各群组图表
-                    for (const groupId of groupIds) {
-                        const chartRef = chartRefs.current[groupId];
-                        const groupData = statsData.data[groupId];
-
-                        if (chartRef && groupData) {
-                            renderMessageTrendChart(groupId, groupData.current, groupData.previous, statsData.timestamps.current);
-                        }
-                    }
-                }, 100);
+                // 走势数据写入 state，交给 MessageTrendChart 声明式渲染（不再用 setTimeout 命令式 init）
+                setChartTimestamps(statsData.timestamps.current);
+                setTotalHourlyTrend({ current: totalCurrentHourly, previous: totalPreviousHourly });
+                setGroupHourlyTrends(perGroupTrends);
             } else {
                 console.error("获取消息统计失败:", response.message);
             }
@@ -497,7 +332,7 @@ export default function GroupsPage() {
                                                 <span className="font-semibold">{totalPreviousMessageCount}</span>
                                             </TableCell>
                                             <TableCell>
-                                                <div ref={totalChartRef} style={{ width: "300px", height: "100px" }} />
+                                                <MessageTrendChart currentHourlyData={totalHourlyTrend.current} previousHourlyData={totalHourlyTrend.previous} timestamps={chartTimestamps} />
                                             </TableCell>
                                         </TableRow>
                                         {/* 群组数据行 - 根据排序描述符排序 */}
@@ -540,11 +375,10 @@ export default function GroupsPage() {
                                                     <span className="font-semibold">{previousMessageCount}</span>
                                                 </TableCell>
                                                 <TableCell>
-                                                    <div
-                                                        ref={el => {
-                                                            chartRefs.current[groupId] = el;
-                                                        }}
-                                                        style={{ width: "300px", height: "100px" }}
+                                                    <MessageTrendChart
+                                                        currentHourlyData={groupHourlyTrends[groupId]?.current ?? []}
+                                                        previousHourlyData={groupHourlyTrends[groupId]?.previous ?? []}
+                                                        timestamps={chartTimestamps}
                                                     />
                                                 </TableCell>
                                             </TableRow>
