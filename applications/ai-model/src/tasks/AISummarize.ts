@@ -20,7 +20,7 @@ import {
 } from "../services/generators/text/PooledTextGeneratorService";
 
 const OPEN_SESSION_DELAY_MS = 10 * 60 * 1000;
-const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 10;
+const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 50;
 
 /**
  * AI 摘要任务处理器

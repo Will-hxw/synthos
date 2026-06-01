@@ -12,7 +12,7 @@ import { ISplitter } from "../splitters/contracts/ISplitter";
 import { COMMON_TOKENS } from "../di/tokens";
 import { getAccumulativeSplitter, getTimeoutSplitter } from "../di/container";
 
-const HISTORICAL_BACKFILL_MESSAGE_LIMIT = 1000;
+const HISTORICAL_BACKFILL_MESSAGE_LIMIT = 5000;
 
 /**
  * 预处理任务处理器
