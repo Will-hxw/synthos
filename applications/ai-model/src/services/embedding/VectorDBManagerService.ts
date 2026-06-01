@@ -230,6 +230,44 @@ export class VectorDBManagerService extends Disposable {
     }
 
     /**
+     * 批量删除嵌入向量，不存在的 topicId 会被忽略。
+     * @param topicIds 话题ID数组
+     */
+    public deleteEmbeddingsIfExists(topicIds: string[]): void {
+        const uniqueTopicIds = Array.from(new Set(topicIds));
+
+        if (uniqueTopicIds.length === 0) {
+            return;
+        }
+
+        const transaction = this.db!.transaction(() => {
+            for (const topicId of uniqueTopicIds) {
+                this._doDeleteEmbedding(topicId);
+            }
+        });
+
+        transaction();
+        this.LOGGER.info(`按需删除完成，共检查 ${uniqueTopicIds.length} 条向量`);
+    }
+
+    /**
+     * 删除所有已经没有摘要结果对应的向量。
+     * @param existingTopicIds 当前摘要结果仍存在的 topicId
+     * @returns 删除的向量数量
+     */
+    public deleteEmbeddingsNotIn(existingTopicIds: string[]): number {
+        const existingTopicIdSet = new Set(existingTopicIds);
+        const rows = this.db!.prepare(`SELECT topic_id FROM topic_vector_mapping`).all() as Array<{
+            topic_id: string;
+        }>;
+        const orphanTopicIds = rows.map(row => row.topic_id).filter(topicId => !existingTopicIdSet.has(topicId));
+
+        this.deleteEmbeddingsIfExists(orphanTopicIds);
+
+        return orphanTopicIds.length;
+    }
+
+    /**
      * 内部删除方法，删除单个 topicId 的嵌入向量（如果存在）
      * 不检查 topicId 是否存在，静默处理不存在的情况
      * @param topicId 话题ID

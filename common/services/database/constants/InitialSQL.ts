@@ -31,9 +31,15 @@ export const createAGCTableSQL = `
                     sessionId TEXT NOT NULL PRIMARY KEY,
                     status TEXT NOT NULL,
                     topicCount INTEGER NOT NULL DEFAULT 0,
-                    updateTime INTEGER NOT NULL
+                    updateTime INTEGER NOT NULL,
+                    processingStartedAt INTEGER,
+                    failReason TEXT,
+                    messageCount INTEGER,
+                    timeStart INTEGER,
+                    timeEnd INTEGER
                 );
-                CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status ON ai_digest_sessions(status);`;
+                CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status ON ai_digest_sessions(status);
+                CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status_updateTime ON ai_digest_sessions(status, updateTime);`;
 
 export const createInterestScoreTableSQL = `
                 CREATE TABLE IF NOT EXISTS interset_score_results (

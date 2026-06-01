@@ -134,6 +134,7 @@ export class WebUILocalServer {
         const { favoriteStatusManager, readStatusManager, reportReadStatusManager } =
             await this.initializeStatusManagers();
 
+        await this.cleanupTopicStatusOrphans(favoriteStatusManager, readStatusManager);
         registerStatusManagers(favoriteStatusManager, readStatusManager, reportReadStatusManager);
 
         // 2. 注册 RAG 聊天历史管理器
@@ -153,6 +154,35 @@ export class WebUILocalServer {
 
         // 5. 注册 Controllers
         registerControllers();
+    }
+
+    private async cleanupTopicStatusOrphans(
+        favoriteStatusManager: TopicFavoriteStatusManager,
+        readStatusManager: TopicReadStatusManager
+    ): Promise<void> {
+        if (!this.agcDbAccessService) {
+            return;
+        }
+
+        await this.agcDbAccessService.deduplicateTopicTitles();
+        const favoriteTopicIds = await favoriteStatusManager.getFavoriteTopicIds();
+        const readTopicIds = await readStatusManager.getReadTopicIds();
+        const candidateTopicIds = Array.from(new Set([...favoriteTopicIds, ...readTopicIds]));
+
+        if (candidateTopicIds.length === 0) {
+            return;
+        }
+
+        const existingTopicIds = await this.agcDbAccessService.getExistingTopicIds(candidateTopicIds);
+        const orphanTopicIds = candidateTopicIds.filter(topicId => !existingTopicIds.has(topicId));
+
+        if (orphanTopicIds.length === 0) {
+            return;
+        }
+
+        await favoriteStatusManager.removeTopicIds(orphanTopicIds);
+        await readStatusManager.removeTopicIds(orphanTopicIds);
+        LOGGER.warning(`已清理 ${orphanTopicIds.length} 个不存在话题的已读/收藏状态`);
     }
 
     public async main(): Promise<void> {

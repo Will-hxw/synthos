@@ -9,6 +9,11 @@ import { COMMON_TOKENS } from "../../di/tokens";
 
 import { CommonDBService } from "./infra/CommonDBService";
 import { createAGCTableSQL } from "./constants/InitialSQL";
+import {
+    AIDIGEST_SESSION_STALE_MS,
+    AIDIGEST_SESSION_STATUSES,
+    AIDigestSessionStatus
+} from "./constants/AIDigestSessionConstants";
 
 export interface LatestTopicRecord extends AIDigestResult {
     timeStart: number;
@@ -32,6 +37,18 @@ export interface LatestTopicPageQuery {
 export interface LatestTopicPageResult {
     records: LatestTopicRecord[];
     total: number;
+}
+
+export interface AIDigestSessionClaimMetadata {
+    messageCount: number;
+    timeStart: number;
+    timeEnd: number;
+}
+
+interface AIDigestSessionRow {
+    status: AIDigestSessionStatus | string;
+    updateTime: number;
+    processingStartedAt: number | null;
 }
 
 /**
@@ -162,6 +179,7 @@ export class AgcDbAccessService extends Disposable {
         // 从 DI 容器获取 CommonDBService 实例
         this.db = container.resolve<CommonDBService>(COMMON_TOKENS.CommonDBService);
         await this.db.init(createAGCTableSQL);
+        await this._ensureAIDigestSessionColumns();
     }
 
     /**
@@ -233,38 +251,109 @@ export class AgcDbAccessService extends Disposable {
         );
     }
 
-    /** 在已开启的事务中写入 session 处理终态（success/empty） */
-    private async _upsertSessionStatus(
-        sessionId: string,
-        status: "success" | "empty",
-        topicCount: number
-    ): Promise<void> {
-        await this.db.run(
-            `INSERT INTO ai_digest_sessions (sessionId, status, topicCount, updateTime) VALUES (?,?,?,?)
-            ON CONFLICT(sessionId) DO UPDATE SET
-                status = excluded.status,
-                topicCount = excluded.topicCount,
-                updateTime = excluded.updateTime
-            `,
-            [sessionId, status, topicCount, Date.now()]
-        );
-    }
-
     /**
-     * 存储多个摘要结果
+     * 存储多个摘要结果。
+     * 按 session 分组后走幂等提交，避免旧调用方继续追加重复话题。
      * @param results 摘要结果
      */
-    public async storeAIDigestResults(results: AIDigestResult[]) {
+    public async storeAIDigestResults(results: AIDigestResult[]): Promise<void> {
         if (results.length === 0) {
             return;
         }
 
+        const sessionResults = new Map<string, AIDigestResult[]>();
+
+        for (const result of results) {
+            if (!sessionResults.has(result.sessionId)) {
+                sessionResults.set(result.sessionId, []);
+            }
+            sessionResults.get(result.sessionId)!.push(result);
+        }
+
+        for (const [sessionId, currentResults] of sessionResults) {
+            await this.commitSessionDigest(sessionId, currentResults);
+        }
+    }
+
+    /**
+     * 原子抢占一个 session 的摘要生成权。
+     * 已成功、已空摘要、处理中未超时或失败未过冷却期的 session 都不会被再次处理。
+     * @param sessionId 会话id
+     * @param metadata session 消息统计
+     * @returns 是否成功抢占
+     */
+    public async tryClaimSessionForDigest(
+        sessionId: string,
+        metadata: AIDigestSessionClaimMetadata
+    ): Promise<boolean> {
+        let claimed = false;
+
         await this.runExclusive(async () => {
             await this.db.run("BEGIN IMMEDIATE TRANSACTION");
             try {
-                for (const result of results) {
-                    await this._insertAIDigestResult(result);
+                const now = Date.now();
+                const staleBefore = now - AIDIGEST_SESSION_STALE_MS;
+                const row = await this.db.get<AIDigestSessionRow>(
+                    `SELECT status, updateTime, processingStartedAt FROM ai_digest_sessions WHERE sessionId = ?`,
+                    [sessionId]
+                );
+
+                if (row) {
+                    if (row.status === AIDIGEST_SESSION_STATUSES.success) {
+                        await this.db.run("COMMIT");
+
+                        return;
+                    }
+
+                    if (row.status === AIDIGEST_SESSION_STATUSES.empty) {
+                        await this.db.run("COMMIT");
+
+                        return;
+                    }
+
+                    const lockTime = row.processingStartedAt ?? row.updateTime;
+
+                    if (row.status === AIDIGEST_SESSION_STATUSES.processing && lockTime >= staleBefore) {
+                        await this.db.run("COMMIT");
+
+                        return;
+                    }
+
+                    if (row.status === AIDIGEST_SESSION_STATUSES.failed && row.updateTime >= staleBefore) {
+                        await this.db.run("COMMIT");
+
+                        return;
+                    }
+                } else {
+                    const legacyResult = await this.db.get<{ topicCount: number }>(
+                        `SELECT COUNT(*) AS topicCount FROM ai_digest_results WHERE sessionId = ?`,
+                        [sessionId]
+                    );
+
+                    if ((legacyResult?.topicCount ?? 0) > 0) {
+                        await this._upsertSessionStatus(
+                            sessionId,
+                            AIDIGEST_SESSION_STATUSES.success,
+                            legacyResult!.topicCount,
+                            metadata,
+                            null,
+                            null
+                        );
+                        await this.db.run("COMMIT");
+
+                        return;
+                    }
                 }
+
+                await this._upsertSessionStatus(
+                    sessionId,
+                    AIDIGEST_SESSION_STATUSES.processing,
+                    0,
+                    metadata,
+                    now,
+                    null
+                );
+                claimed = true;
 
                 await this.db.run("COMMIT");
             } catch (err) {
@@ -272,6 +361,8 @@ export class AgcDbAccessService extends Disposable {
                 throw err;
             }
         });
+
+        return claimed;
     }
 
     /**
@@ -279,22 +370,106 @@ export class AgcDbAccessService extends Disposable {
      * 并写入 success 终态。重复执行同一 session 不会产生重复话题行。
      * @param sessionId 会话id
      * @param results 摘要结果（其 sessionId 必须与入参一致）
+     * @returns 本次提交删除的话题ID，供外部清理向量等外部索引
      */
-    public async commitSessionDigest(sessionId: string, results: AIDigestResult[]): Promise<void> {
+    public async commitSessionDigest(sessionId: string, results: AIDigestResult[]): Promise<string[]> {
         for (const result of results) {
             if (result.sessionId !== sessionId) {
                 throw new Error(`result的sessionId必须是${sessionId}，但实际为${result.sessionId}`);
             }
         }
 
+        let deletedTopicIds: string[] = [];
+
         await this.runExclusive(async () => {
             await this.db.run("BEGIN IMMEDIATE TRANSACTION");
             try {
-                await this.db.run(`DELETE FROM ai_digest_results WHERE sessionId = ?`, [sessionId]);
+                const oldTopicIds = await this._getTopicIdsBySessionId(sessionId);
+
+                await this._deleteTopicIds(oldTopicIds);
                 for (const result of results) {
                     await this._insertAIDigestResult(result);
                 }
-                await this._upsertSessionStatus(sessionId, "success", results.length);
+
+                const duplicateTopicIds = await this._findDuplicateTopicIdsByTitle();
+
+                await this._deleteTopicIds(duplicateTopicIds);
+
+                deletedTopicIds = this._uniqueStrings([...oldTopicIds, ...duplicateTopicIds]);
+                const topicCount = await this._getSessionTopicCount(sessionId);
+
+                await this._upsertSessionStatus(
+                    sessionId,
+                    AIDIGEST_SESSION_STATUSES.success,
+                    topicCount,
+                    undefined,
+                    null,
+                    null
+                );
+                await this._refreshSuccessSessionTopicCounts();
+
+                await this.db.run("COMMIT");
+            } catch (err) {
+                await this.db.run("ROLLBACK");
+                throw err;
+            }
+        });
+
+        return deletedTopicIds;
+    }
+
+    /**
+     * 将一个 session 标记为空摘要终态（LLM 合法返回无有效话题）。
+     * 清除该 session 可能残留的旧话题并写入 empty 终态，使其不再被重复摘要。
+     * @param sessionId 会话id
+     */
+    public async markSessionEmpty(sessionId: string): Promise<string[]> {
+        let deletedTopicIds: string[] = [];
+
+        await this.runExclusive(async () => {
+            await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+            try {
+                deletedTopicIds = await this._getTopicIdsBySessionId(sessionId);
+
+                await this._deleteTopicIds(deletedTopicIds);
+                await this._upsertSessionStatus(
+                    sessionId,
+                    AIDIGEST_SESSION_STATUSES.empty,
+                    0,
+                    undefined,
+                    null,
+                    null
+                );
+
+                await this.db.run("COMMIT");
+            } catch (err) {
+                await this.db.run("ROLLBACK");
+                throw err;
+            }
+        });
+
+        return deletedTopicIds;
+    }
+
+    /**
+     * 将 session 标记为摘要失败，避免失败 session 在短时间内被反复提交给 LLM。
+     * @param sessionId 会话id
+     * @param reason 失败原因
+     */
+    public async markSessionFailed(sessionId: string, reason: string): Promise<void> {
+        const failReason = reason.length > 500 ? reason.slice(0, 500) : reason;
+
+        await this.runExclusive(async () => {
+            await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+            try {
+                await this._upsertSessionStatus(
+                    sessionId,
+                    AIDIGEST_SESSION_STATUSES.failed,
+                    0,
+                    undefined,
+                    null,
+                    failReason
+                );
 
                 await this.db.run("COMMIT");
             } catch (err) {
@@ -305,16 +480,18 @@ export class AgcDbAccessService extends Disposable {
     }
 
     /**
-     * 将一个 session 标记为空摘要终态（LLM 合法返回无有效话题）。
-     * 清除该 session 可能残留的旧话题并写入 empty 终态，使其不再被重复摘要。
-     * @param sessionId 会话id
+     * 全量清理重复标题话题。标题完全相同（按 trim 后比较）时只保留 session 结束时间最新的一条。
+     * @returns 被删除的话题ID
      */
-    public async markSessionEmpty(sessionId: string): Promise<void> {
+    public async deduplicateTopicTitles(): Promise<string[]> {
+        let deletedTopicIds: string[] = [];
+
         await this.runExclusive(async () => {
             await this.db.run("BEGIN IMMEDIATE TRANSACTION");
             try {
-                await this.db.run(`DELETE FROM ai_digest_results WHERE sessionId = ?`, [sessionId]);
-                await this._upsertSessionStatus(sessionId, "empty", 0);
+                deletedTopicIds = await this._findDuplicateTopicIdsByTitle();
+                await this._deleteTopicIds(deletedTopicIds);
+                await this._refreshSuccessSessionTopicCounts();
 
                 await this.db.run("COMMIT");
             } catch (err) {
@@ -322,6 +499,12 @@ export class AgcDbAccessService extends Disposable {
                 throw err;
             }
         });
+
+        if (deletedTopicIds.length > 0) {
+            this.LOGGER.warning(`已清理 ${deletedTopicIds.length} 个重复标题话题`);
+        }
+
+        return deletedTopicIds;
     }
 
     /**
@@ -418,6 +601,36 @@ export class AgcDbAccessService extends Disposable {
     }
 
     /**
+     * 返回输入 topicId 中当前仍存在摘要记录的集合。
+     * @param topicIds 待检查话题ID
+     */
+    public async getExistingTopicIds(topicIds: string[]): Promise<Set<string>> {
+        const existingTopicIds = new Set<string>();
+
+        if (topicIds.length === 0) {
+            return existingTopicIds;
+        }
+
+        const MAX_SQLITE_PARAMS = 999;
+        const uniqueTopicIds = this._uniqueStrings(topicIds);
+
+        for (let i = 0; i < uniqueTopicIds.length; i += MAX_SQLITE_PARAMS) {
+            const batch = uniqueTopicIds.slice(i, i + MAX_SQLITE_PARAMS);
+            const placeholders = batch.map(() => "?").join(", ");
+            const rows = await this.db.all<{ topicId: string }>(
+                `SELECT topicId FROM ai_digest_results WHERE topicId IN (${placeholders})`,
+                batch
+            );
+
+            for (const row of rows) {
+                existingTopicIds.add(row.topicId);
+            }
+        }
+
+        return existingTopicIds;
+    }
+
+    /**
      * 获取指定时间范围内命中的话题记录，并附带所属会话完整时间范围、群组和兴趣分。
      * 时间过滤语义与旧页面链路一致：只要 session 内任一消息落入时间范围，就返回该 session 的全部话题。
      * @param timeStart 开始时间戳
@@ -510,6 +723,153 @@ export class AgcDbAccessService extends Disposable {
     // 获取数据消息，用于数据库迁移、导出、备份等操作
     public async selectAll(): Promise<AIDigestResult[]> {
         return this.db.all<AIDigestResult>(`SELECT * FROM ai_digest_results`);
+    }
+
+    private async _ensureAIDigestSessionColumns(): Promise<void> {
+        const columns = await this.db.all<{ name: string }>(`PRAGMA table_info(ai_digest_sessions)`);
+        const columnNames = new Set(columns.map(column => column.name));
+        const columnSqlList: Array<{ name: string; sql: string }> = [
+            {
+                name: "processingStartedAt",
+                sql: "ALTER TABLE ai_digest_sessions ADD COLUMN processingStartedAt INTEGER"
+            },
+            { name: "failReason", sql: "ALTER TABLE ai_digest_sessions ADD COLUMN failReason TEXT" },
+            { name: "messageCount", sql: "ALTER TABLE ai_digest_sessions ADD COLUMN messageCount INTEGER" },
+            { name: "timeStart", sql: "ALTER TABLE ai_digest_sessions ADD COLUMN timeStart INTEGER" },
+            { name: "timeEnd", sql: "ALTER TABLE ai_digest_sessions ADD COLUMN timeEnd INTEGER" }
+        ];
+
+        for (const item of columnSqlList) {
+            if (!columnNames.has(item.name)) {
+                await this.db.run(item.sql);
+            }
+        }
+
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status_updateTime ON ai_digest_sessions(status, updateTime)`
+        );
+    }
+
+    private async _upsertSessionStatus(
+        sessionId: string,
+        status: AIDigestSessionStatus,
+        topicCount: number,
+        metadata: AIDigestSessionClaimMetadata | undefined,
+        processingStartedAt: number | null,
+        failReason: string | null
+    ): Promise<void> {
+        const now = Date.now();
+
+        await this.db.run(
+            `INSERT INTO ai_digest_sessions (
+                sessionId,
+                status,
+                topicCount,
+                updateTime,
+                processingStartedAt,
+                failReason,
+                messageCount,
+                timeStart,
+                timeEnd
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(sessionId) DO UPDATE SET
+                status = excluded.status,
+                topicCount = excluded.topicCount,
+                updateTime = excluded.updateTime,
+                processingStartedAt = excluded.processingStartedAt,
+                failReason = excluded.failReason,
+                messageCount = COALESCE(excluded.messageCount, ai_digest_sessions.messageCount),
+                timeStart = COALESCE(excluded.timeStart, ai_digest_sessions.timeStart),
+                timeEnd = COALESCE(excluded.timeEnd, ai_digest_sessions.timeEnd)
+            `,
+            [
+                sessionId,
+                status,
+                topicCount,
+                now,
+                processingStartedAt,
+                failReason,
+                metadata?.messageCount ?? null,
+                metadata?.timeStart ?? null,
+                metadata?.timeEnd ?? null
+            ]
+        );
+    }
+
+    private async _getTopicIdsBySessionId(sessionId: string): Promise<string[]> {
+        const rows = await this.db.all<{ topicId: string }>(
+            `SELECT topicId FROM ai_digest_results WHERE sessionId = ?`,
+            [sessionId]
+        );
+
+        return rows.map(row => row.topicId);
+    }
+
+    private async _getSessionTopicCount(sessionId: string): Promise<number> {
+        const row = await this.db.get<{ topicCount: number }>(
+            `SELECT COUNT(*) AS topicCount FROM ai_digest_results WHERE sessionId = ?`,
+            [sessionId]
+        );
+
+        return row?.topicCount ?? 0;
+    }
+
+    private async _findDuplicateTopicIdsByTitle(): Promise<string[]> {
+        const rows = await this.db.all<{ topicId: string }>(
+            `WITH session_durations AS (
+                SELECT sessionId, MAX(timestamp) AS timeEnd
+                FROM chat_messages
+                WHERE sessionId IS NOT NULL
+                GROUP BY sessionId
+            ),
+            ranked_topics AS (
+                SELECT
+                    ar.topicId AS topicId,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY TRIM(COALESCE(ar.topic, ''))
+                        ORDER BY COALESCE(sd.timeEnd, 0) DESC, COALESCE(ar.updateTime, 0) DESC, ar.topicId ASC
+                    ) AS titleRank
+                FROM ai_digest_results ar
+                LEFT JOIN session_durations sd ON sd.sessionId = ar.sessionId
+                WHERE TRIM(COALESCE(ar.topic, '')) <> ''
+            )
+            SELECT topicId FROM ranked_topics WHERE titleRank > 1
+            UNION
+            SELECT topicId FROM ai_digest_results WHERE TRIM(COALESCE(topic, '')) = ''`
+        );
+
+        return rows.map(row => row.topicId);
+    }
+
+    private async _deleteTopicIds(topicIds: string[]): Promise<void> {
+        const uniqueTopicIds = this._uniqueStrings(topicIds);
+
+        if (uniqueTopicIds.length === 0) {
+            return;
+        }
+
+        const MAX_SQLITE_PARAMS = 999;
+
+        for (let i = 0; i < uniqueTopicIds.length; i += MAX_SQLITE_PARAMS) {
+            const batch = uniqueTopicIds.slice(i, i + MAX_SQLITE_PARAMS);
+            const placeholders = batch.map(() => "?").join(", ");
+
+            await this.db.run(`DELETE FROM interset_score_results WHERE topicId IN (${placeholders})`, batch);
+            await this.db.run(`DELETE FROM ai_digest_results WHERE topicId IN (${placeholders})`, batch);
+        }
+    }
+
+    private async _refreshSuccessSessionTopicCounts(): Promise<void> {
+        await this.db.run(
+            `UPDATE ai_digest_sessions
+             SET topicCount = (
+                SELECT COUNT(*)
+                FROM ai_digest_results ar
+                WHERE ar.sessionId = ai_digest_sessions.sessionId
+             )
+             WHERE status = ?`,
+            [AIDIGEST_SESSION_STATUSES.success]
+        );
     }
 
     private _escapeLikePattern(value: string): string {

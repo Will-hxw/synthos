@@ -39,3 +39,4 @@ docker/config/synthos_config_override.json
 logs/
 .claude/
 pids.json
+.dev-runner-locks/

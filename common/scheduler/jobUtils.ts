@@ -205,12 +205,16 @@ export async function scheduleAndWaitForJob<T extends TaskHandlerTypes>(
  * - 状态为 queued（待执行）的任务：上次调度但未执行的任务
  *
  * 此函数会：
- * 1. 取消所有被锁定（正在运行）的任务
+ * 1. 取消锁定时间超过阈值的任务
  * 2. 移除所有一次性调度（非定时）的待执行任务
  *
  * @param taskNames - 可选，指定要清理的任务名称列表；不传则清理所有任务
+ * @param staleLockMs - 锁超过该时长才会被视为残留
  */
-export async function cleanupStaleJobs(taskNames?: TaskHandlerTypes[]): Promise<void> {
+export async function cleanupStaleJobs(
+    taskNames?: TaskHandlerTypes[],
+    staleLockMs: number = 2 * 60 * 60 * 1000
+): Promise<void> {
     await agendaInstance.ready;
 
     await retryAsync(
@@ -223,14 +227,16 @@ export async function cleanupStaleJobs(taskNames?: TaskHandlerTypes[]): Promise<
                 query.name = { $in: taskNames };
             }
 
-            // 1. 查找所有被锁定的任务（上次运行中断）
+            const staleLockedBefore = new Date(Date.now() - staleLockMs);
+
+            // 1. 查找锁定时间超过阈值的任务，避免误伤仍在运行的其他进程
             const lockedJobs = await agendaInstance.jobs({
                 ...query,
-                lockedAt: { $ne: null }
+                lockedAt: { $ne: null, $lte: staleLockedBefore }
             });
 
             if (lockedJobs.length > 0) {
-                LOGGER.warning(`发现 ${lockedJobs.length} 个被锁定的残留任务，正在取消...`);
+                LOGGER.warning(`发现 ${lockedJobs.length} 个锁定超过 ${staleLockMs}ms 的残留任务，正在取消...`);
                 for (const job of lockedJobs) {
                     LOGGER.debug(`  - 取消任务: ${job.attrs.name} (锁定于 ${job.attrs.lockedAt})`);
                     // 解除锁定并标记为失败

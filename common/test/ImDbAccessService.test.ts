@@ -74,11 +74,11 @@ describe("ImDbAccessService", () => {
         const sql = mockCommonDBService.all.mock.calls[0][0] as string;
         const params = mockCommonDBService.all.mock.calls[0][1];
 
-        expect(sql).toContain(
-            "NOT EXISTS (SELECT 1 FROM ai_digest_sessions ds WHERE ds.sessionId = cm.sessionId)"
-        );
+        expect(sql).toContain("FROM ai_digest_sessions ds");
+        expect(sql).toContain("ds.status IN ('success', 'empty')");
+        expect(sql).toContain("ds.status IN ('processing', 'failed') AND ds.updateTime >= ?");
         expect(sql).toContain("HAVING COUNT(ar.topicId) = 0");
-        expect(params).toEqual(["group-a", 10]);
+        expect(params).toEqual(["group-a", expect.any(Number), 10]);
     });
 
     it("应批量查询会话时间范围并按输入顺序返回，缺失会话以 undefined 占位", async () => {

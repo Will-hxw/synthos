@@ -338,5 +338,29 @@ describe("VectorDBManagerService", () => {
                 "向量不存在：topicId = missing-001, missing-002"
             );
         });
+
+        it("deleteEmbeddingsIfExists 应忽略不存在的话题", () => {
+            manager.storeEmbedding("keep-if-exists", generateRandomVector(TEST_DIMENSION));
+            manager.storeEmbedding("delete-if-exists", generateRandomVector(TEST_DIMENSION));
+
+            manager.deleteEmbeddingsIfExists(["delete-if-exists", "missing-topic"]);
+
+            expect(manager.hasEmbedding("keep-if-exists")).toBe(true);
+            expect(manager.hasEmbedding("delete-if-exists")).toBe(false);
+            expect(manager.getCount()).toBe(1);
+        });
+
+        it("deleteEmbeddingsNotIn 应删除孤儿向量", () => {
+            manager.storeEmbedding("keep-orphan-check", generateRandomVector(TEST_DIMENSION));
+            manager.storeEmbedding("orphan-001", generateRandomVector(TEST_DIMENSION));
+            manager.storeEmbedding("orphan-002", generateRandomVector(TEST_DIMENSION));
+
+            const deletedCount = manager.deleteEmbeddingsNotIn(["keep-orphan-check"]);
+
+            expect(deletedCount).toBe(2);
+            expect(manager.hasEmbedding("keep-orphan-check")).toBe(true);
+            expect(manager.hasEmbedding("orphan-001")).toBe(false);
+            expect(manager.hasEmbedding("orphan-002")).toBe(false);
+        });
     });
 });

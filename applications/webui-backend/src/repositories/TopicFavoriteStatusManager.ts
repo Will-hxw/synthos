@@ -41,6 +41,16 @@ export class TopicFavoriteStatusManager {
     }
 
     /**
+     * 批量删除收藏状态。
+     * @param topicIds 话题ID列表
+     */
+    public async removeTopicIds(topicIds: string[]): Promise<void> {
+        for (const topicId of new Set(topicIds)) {
+            await this.store.del(topicId);
+        }
+    }
+
+    /**
      * 检查话题是否被收藏
      */
     async isTopicFavorite(topicId: string): Promise<boolean> {

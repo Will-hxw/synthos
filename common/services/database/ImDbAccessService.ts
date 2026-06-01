@@ -12,6 +12,7 @@ import { mustInitBeforeUse } from "../../util/lifecycle/mustInitBeforeUse";
 import { COMMON_TOKENS } from "../../di/tokens";
 
 import { createIMDBTableSQL } from "./constants/InitialSQL";
+import { AIDIGEST_SESSION_STALE_MS } from "./constants/AIDigestSessionConstants";
 import { CommonDBService } from "./infra/CommonDBService";
 
 export interface MessageRangeStats {
@@ -386,6 +387,7 @@ export class ImDbAccessService extends Disposable {
      */
     public async getUnsummarizedSessionStatsByGroupId(groupId: string, limit: number): Promise<SessionStats[]> {
         const resolvedLimit = Math.max(1, Math.floor(limit));
+        const staleBefore = Date.now() - AIDIGEST_SESSION_STALE_MS;
 
         return await this.db.all<SessionStats>(
             `SELECT
@@ -396,12 +398,19 @@ export class ImDbAccessService extends Disposable {
              FROM chat_messages cm
              LEFT JOIN ai_digest_results ar ON ar.sessionId = cm.sessionId
              WHERE cm.groupId = ? AND cm.sessionId IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM ai_digest_sessions ds WHERE ds.sessionId = cm.sessionId)
+               AND NOT EXISTS (
+                    SELECT 1 FROM ai_digest_sessions ds
+                    WHERE ds.sessionId = cm.sessionId
+                      AND (
+                        ds.status IN ('success', 'empty')
+                        OR (ds.status IN ('processing', 'failed') AND ds.updateTime >= ?)
+                      )
+               )
              GROUP BY cm.sessionId
              HAVING COUNT(ar.topicId) = 0
              ORDER BY timeEnd ASC
              LIMIT ?`,
-            [groupId, resolvedLimit]
+            [groupId, staleBefore, resolvedLimit]
         );
     }
 

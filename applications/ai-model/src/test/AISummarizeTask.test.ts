@@ -5,8 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
     mockAgendaCreate,
     mockAgendaDefine,
-    mockAgendaSave,
-    mockAgendaUnique,
     mockBuildCtx,
     mockCtxDispose,
     mockCtxInit,
@@ -22,8 +20,6 @@ const {
     return {
         mockAgendaCreate: vi.fn(() => ({ unique })),
         mockAgendaDefine: vi.fn(),
-        mockAgendaSave: save,
-        mockAgendaUnique: unique,
         mockBuildCtx: vi.fn().mockResolvedValue("摘要上下文"),
         mockCtxDispose: vi.fn().mockResolvedValue(undefined),
         mockCtxInit: vi.fn().mockResolvedValue(undefined),
@@ -115,9 +111,13 @@ describe("AISummarizeTaskHandler", () => {
         getProcessedChatMessagesBySessionId: vi.fn()
     };
     const mockAgcDbAccessService = {
-        isSessionIdProcessed: vi.fn(),
+        tryClaimSessionForDigest: vi.fn(),
         commitSessionDigest: vi.fn(),
-        markSessionEmpty: vi.fn()
+        markSessionEmpty: vi.fn(),
+        markSessionFailed: vi.fn()
+    };
+    const mockVectorDBManagerService = {
+        deleteEmbeddingsIfExists: vi.fn()
     };
 
     beforeEach(() => {
@@ -138,9 +138,11 @@ describe("AISummarizeTaskHandler", () => {
         mockImDbAccessService.getProcessedChatMessagesBySessionId.mockImplementation(async (sessionId: string) => [
             createMessage(`${sessionId}-msg-1`, "group-a", sessionId, 1000)
         ]);
-        mockAgcDbAccessService.isSessionIdProcessed.mockResolvedValue(false);
-        mockAgcDbAccessService.commitSessionDigest.mockResolvedValue(undefined);
-        mockAgcDbAccessService.markSessionEmpty.mockResolvedValue(undefined);
+        mockAgcDbAccessService.tryClaimSessionForDigest.mockResolvedValue(true);
+        mockAgcDbAccessService.commitSessionDigest.mockResolvedValue([]);
+        mockAgcDbAccessService.markSessionEmpty.mockResolvedValue([]);
+        mockAgcDbAccessService.markSessionFailed.mockResolvedValue(undefined);
+        mockVectorDBManagerService.deleteEmbeddingsIfExists.mockReturnValue(undefined);
         mockGenerateContent.mockImplementation((sessionId: string) =>
             JSON.stringify([{ topic: `话题 ${sessionId}`, contributors: ["发送者"], detail: "摘要详情" }])
         );
@@ -153,7 +155,13 @@ describe("AISummarizeTaskHandler", () => {
             )
         );
 
-        await runProcessor(mockConfigManagerService, mockImDbAccessService, mockAgcDbAccessService, 2_000_000);
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
 
         expect(mockSubmitTasks.mock.calls[0][0]).toHaveLength(1);
         expect(mockSubmitTasks.mock.calls[0][0][0].context).toEqual({
@@ -177,7 +185,13 @@ describe("AISummarizeTaskHandler", () => {
             createMessage("historical-2", "group-a", "historical-session", 200)
         ]);
 
-        await runProcessor(mockConfigManagerService, mockImDbAccessService, mockAgcDbAccessService, 2_000_000);
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
 
         expect(mockSubmitTasks.mock.calls[0][0]).toHaveLength(1);
         expect(mockSubmitTasks.mock.calls[0][0][0].context.sessionId).toBe("historical-session");
@@ -189,19 +203,31 @@ describe("AISummarizeTaskHandler", () => {
             createMessage("open-1", "group-a", "open-session", 1_990_000)
         ]);
 
-        await runProcessor(mockConfigManagerService, mockImDbAccessService, mockAgcDbAccessService, 2_000_000);
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
 
         expect(mockSubmitTasks.mock.calls[0][0]).toHaveLength(0);
         expect(mockAgcDbAccessService.commitSessionDigest).not.toHaveBeenCalled();
     });
 
-    it("已处理 session 不应重复生成摘要", async () => {
+    it("抢占失败的 session 不应重复生成摘要", async () => {
         mockImDbAccessService.getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange.mockResolvedValue([
             createMessage("done-1", "group-a", "done-session", 1000)
         ]);
-        mockAgcDbAccessService.isSessionIdProcessed.mockResolvedValue(true);
+        mockAgcDbAccessService.tryClaimSessionForDigest.mockResolvedValue(false);
 
-        await runProcessor(mockConfigManagerService, mockImDbAccessService, mockAgcDbAccessService, 2_000_000);
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
 
         expect(mockSubmitTasks.mock.calls[0][0]).toHaveLength(0);
         expect(mockAgcDbAccessService.commitSessionDigest).not.toHaveBeenCalled();
@@ -215,9 +241,16 @@ describe("AISummarizeTaskHandler", () => {
         );
         mockGenerateContent.mockReturnValue(JSON.stringify([]));
 
-        await runProcessor(mockConfigManagerService, mockImDbAccessService, mockAgcDbAccessService, 2_000_000);
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
 
         expect(mockAgcDbAccessService.markSessionEmpty).toHaveBeenCalledWith("empty-session");
+        expect(mockVectorDBManagerService.deleteEmbeddingsIfExists).toHaveBeenCalledWith([]);
         expect(mockAgcDbAccessService.commitSessionDigest).not.toHaveBeenCalled();
     });
 
@@ -236,7 +269,13 @@ describe("AISummarizeTaskHandler", () => {
             ])
         );
 
-        await runProcessor(mockConfigManagerService, mockImDbAccessService, mockAgcDbAccessService, 2_000_000);
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
 
         expect(mockAgcDbAccessService.markSessionEmpty).not.toHaveBeenCalled();
         expect(mockAgcDbAccessService.commitSessionDigest).toHaveBeenCalledOnce();
@@ -246,18 +285,62 @@ describe("AISummarizeTaskHandler", () => {
         expect(results.map((item: any) => item.topic)).toEqual(["话题A", "话题B"]);
         expect(results.every((item: any) => item.sessionId === "dup-session")).toBe(true);
     });
+
+    it("提交摘要后应清理被替换话题的向量", async () => {
+        mockImDbAccessService.getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange.mockResolvedValue(
+            Array.from({ length: 5 }, (_, index) =>
+                createMessage(`replace-${index}`, "group-a", "replace-session", 1000 + index)
+            )
+        );
+        mockAgcDbAccessService.commitSessionDigest.mockResolvedValue(["old-topic"]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
+
+        expect(mockVectorDBManagerService.deleteEmbeddingsIfExists).toHaveBeenCalledWith(["old-topic"]);
+    });
+
+    it("摘要结果解析失败时应写入 failed 终态", async () => {
+        mockImDbAccessService.getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange.mockResolvedValue(
+            Array.from({ length: 5 }, (_, index) =>
+                createMessage(`bad-${index}`, "group-a", "bad-session", 1000 + index)
+            )
+        );
+        mockGenerateContent.mockReturnValue("不是JSON");
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
+
+        expect(mockAgcDbAccessService.markSessionFailed).toHaveBeenCalledWith(
+            "bad-session",
+            expect.stringContaining("Unexpected")
+        );
+        expect(mockAgcDbAccessService.commitSessionDigest).not.toHaveBeenCalled();
+    });
 });
 
 async function runProcessor(
     mockConfigManagerService: any,
     mockImDbAccessService: any,
     mockAgcDbAccessService: any,
+    mockVectorDBManagerService: any,
     endTimeStamp: number
 ) {
     const handler = new AISummarizeTaskHandler(
         mockConfigManagerService as any,
         mockImDbAccessService as any,
-        mockAgcDbAccessService as any
+        mockAgcDbAccessService as any,
+        mockVectorDBManagerService as any
     );
 
     await handler.register();

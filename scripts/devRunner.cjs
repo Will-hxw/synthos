@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 const { spawn, execSync } = require('child_process');
 
 function parseArgs(argv) {
@@ -115,6 +116,21 @@ function isPidRunningWin(pid) {
     }
 }
 
+function isPidRunning(pid) {
+    if (!pid || pid <= 0) return false;
+
+    if (process.platform === 'win32') {
+        return isPidRunningWin(pid);
+    }
+
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 async function waitForPidExitWin(pid, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -185,6 +201,113 @@ async function killTree(pid, name) {
 
     // attempted but failed or still running
     log(name, `warning: kill may not have succeeded pid=${pid}`);
+}
+
+function getLockFilePath(cwd, name) {
+    const rootDir = path.resolve(cwd, '../..');
+    const lockDir = path.join(rootDir, '.dev-runner-locks');
+    const allowedChars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_';
+    const safeName = Array.from(String(name))
+        .map((ch) => (allowedChars.includes(ch) ? ch : '_'))
+        .join('');
+
+    return path.join(lockDir, `${safeName || 'service'}.json`);
+}
+
+function readProcessLock(lockFilePath) {
+    try {
+        return JSON.parse(fs.readFileSync(lockFilePath, 'utf8'));
+    } catch {
+        return null;
+    }
+}
+
+function writeProcessLock(lockFilePath, lockInfo) {
+    fs.writeFileSync(lockFilePath, `${JSON.stringify(lockInfo, null, 2)}\n`, 'utf8');
+}
+
+function removeProcessLock(lockFilePath) {
+    try {
+        const lockInfo = readProcessLock(lockFilePath);
+
+        if (!lockInfo || lockInfo.runnerPid === process.pid) {
+            fs.unlinkSync(lockFilePath);
+        }
+    } catch {
+        // 锁文件不存在或已被新进程接管，无需处理
+    }
+}
+
+async function killExistingLockOwner(lockFilePath, name) {
+    const lockInfo = readProcessLock(lockFilePath);
+    const pidSet = new Set();
+
+    if (lockInfo?.runnerPid && lockInfo.runnerPid !== process.pid) {
+        pidSet.add(Number(lockInfo.runnerPid));
+    }
+    if (lockInfo?.childPid && lockInfo.childPid !== process.pid) {
+        pidSet.add(Number(lockInfo.childPid));
+    }
+
+    for (const pid of pidSet) {
+        if (Number.isFinite(pid) && pid > 0 && isPidRunning(pid)) {
+            log(name, `发现旧实例 pid=${pid}，正在停止后接管`);
+            await killTree(pid, name);
+        }
+    }
+
+    try {
+        fs.unlinkSync(lockFilePath);
+    } catch {
+        // 其他并发启动可能已处理该锁
+    }
+}
+
+async function acquireProcessLock(cwd, name) {
+    const lockFilePath = getLockFilePath(cwd, name);
+
+    fs.mkdirSync(path.dirname(lockFilePath), { recursive: true });
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const fd = fs.openSync(lockFilePath, 'wx');
+            const lockInfo = {
+                name,
+                cwd,
+                runnerPid: process.pid,
+                childPid: null,
+                startedAt: Date.now(),
+                updatedAt: Date.now(),
+            };
+
+            fs.writeFileSync(fd, `${JSON.stringify(lockInfo, null, 2)}\n`, 'utf8');
+            fs.closeSync(fd);
+
+            return lockFilePath;
+        } catch (err) {
+            if (err?.code !== 'EEXIST') {
+                throw err;
+            }
+
+            await killExistingLockOwner(lockFilePath, name);
+        }
+    }
+
+    throw new Error(`无法获取 ${name} 的 devRunner 锁：${lockFilePath}`);
+}
+
+function updateProcessLock(lockFilePath, patch) {
+    const lockInfo = readProcessLock(lockFilePath);
+
+    if (!lockInfo || lockInfo.runnerPid !== process.pid) {
+        return;
+    }
+
+    writeProcessLock(lockFilePath, {
+        ...lockInfo,
+        ...patch,
+        updatedAt: Date.now(),
+    });
 }
 
 function uniqNumbers(values) {
@@ -347,6 +470,7 @@ async function main() {
     const cwd = process.cwd();
     const entry = args.entry || 'dist/index.js';
     const debounceMs = Number.isFinite(args.debounce) ? args.debounce : 800;
+    const lockFilePath = await acquireProcessLock(cwd, name);
 
     const watchPaths = args.watch.length ? args.watch.slice() : ['src'];
     if (!args.noCommon) watchPaths.push('../../common');
@@ -380,12 +504,14 @@ async function main() {
 
         try {
             if (oldPid) await killTree(oldPid, name);
+            updateProcessLock(lockFilePath, { childPid: null });
             runBuild(cwd, name);
             const portCheck = await killByPorts(args.killPorts, name);
             if (portCheck && portCheck.ok === false) {
                 throw new Error(`Ports still busy after cleanup: ${portCheck.busy || ''}`);
             }
             child = startChild(entry, cwd, name);
+            updateProcessLock(lockFilePath, { childPid: child.pid ?? null });
         } catch (e) {
             log(name, 'restart failed; child not started');
             console.error(e?.stack || e);
@@ -400,11 +526,13 @@ async function main() {
     const shutdown = async () => {
         log(name, 'shutdown requested');
         if (child?.pid) await killTree(child.pid, name);
+        removeProcessLock(lockFilePath);
         process.exit(0);
     };
 
     process.on('SIGINT', shutdown);
     process.on('SIGTERM', shutdown);
+    process.on('exit', () => removeProcessLock(lockFilePath));
 
     // initial start
     await restart('initial');

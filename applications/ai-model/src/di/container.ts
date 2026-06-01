@@ -81,6 +81,12 @@ export async function registerAllDependencies(): Promise<void> {
     );
 
     await vectorDBManagerService.init();
+    const deletedDuplicateTopicIds = await agcDbAccessService.deduplicateTopicTitles();
+
+    vectorDBManagerService.deleteEmbeddingsIfExists(deletedDuplicateTopicIds);
+    vectorDBManagerService.deleteEmbeddingsNotIn(
+        (await agcDbAccessService.selectAll()).map(result => result.topicId)
+    );
     container.registerInstance(AI_MODEL_TOKENS.VectorDBManagerService, vectorDBManagerService);
     const embeddingService = new EmbeddingService(
         config.ai.embedding.ollamaBaseURL,

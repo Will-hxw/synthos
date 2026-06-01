@@ -7,6 +7,17 @@ import { COMMON_TOKENS } from "../di/tokens";
 import { AgcDbAccessService } from "../services/database/AgcDbAccessService";
 
 describe("AgcDbAccessService", () => {
+    const sessionColumns = [
+        "sessionId",
+        "status",
+        "topicCount",
+        "updateTime",
+        "processingStartedAt",
+        "failReason",
+        "messageCount",
+        "timeStart",
+        "timeEnd"
+    ].map(name => ({ name }));
     const mockCommonDBService = {
         init: vi.fn(),
         get: vi.fn(),
@@ -19,7 +30,13 @@ describe("AgcDbAccessService", () => {
         vi.clearAllMocks();
         mockCommonDBService.init.mockResolvedValue(undefined);
         mockCommonDBService.get.mockResolvedValue({ total: 7 });
-        mockCommonDBService.all.mockResolvedValue([]);
+        mockCommonDBService.all.mockImplementation(async (sql: string) => {
+            if (sql.includes("PRAGMA table_info(ai_digest_sessions)")) {
+                return sessionColumns;
+            }
+
+            return [];
+        });
         mockCommonDBService.run.mockResolvedValue(undefined);
         container.registerInstance(COMMON_TOKENS.CommonDBService, mockCommonDBService as any);
     });
@@ -28,6 +45,7 @@ describe("AgcDbAccessService", () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
         await service.getLatestTopicRecordsPageByTimeRange({
             timeStart: 100,
             timeEnd: 200,
@@ -68,6 +86,7 @@ describe("AgcDbAccessService", () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
         const result = await service.getLatestTopicRecordsPageByTimeRange({
             timeStart: 100,
             timeEnd: 200,
@@ -89,6 +108,7 @@ describe("AgcDbAccessService", () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
         await service.getLatestTopicRecordsByTimeRange(100, 200, "group-a");
 
         const sql = mockCommonDBService.all.mock.calls[0][0] as string;
@@ -103,7 +123,7 @@ describe("AgcDbAccessService", () => {
     });
 
     it("应批量查询多个session的摘要结果并按输入顺序分组", async () => {
-        mockCommonDBService.all.mockResolvedValue([
+        const rows = [
             {
                 topicId: "topic-2",
                 sessionId: "session-2",
@@ -122,10 +142,12 @@ describe("AgcDbAccessService", () => {
                 modelName: "mock",
                 updateTime: 1
             }
-        ]);
+        ];
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValue(rows);
         const result = await service.getAIDigestResultsBySessionIds(["session-1", "session-2", "session-1"]);
 
         expect(mockCommonDBService.all).toHaveBeenCalledWith(
@@ -139,7 +161,7 @@ describe("AgcDbAccessService", () => {
     });
 
     it("应批量查询多个topicId的摘要结果并返回去重映射", async () => {
-        mockCommonDBService.all.mockResolvedValue([
+        const rows = [
             {
                 topicId: "topic-2",
                 sessionId: "session-2",
@@ -158,10 +180,12 @@ describe("AgcDbAccessService", () => {
                 modelName: "mock",
                 updateTime: 1
             }
-        ]);
+        ];
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValue(rows);
         // 含重复 topicId，应在单条 IN 查询里去重
         const result = await service.getAIDigestResultsByTopicIds(["topic-1", "topic-2", "topic-1"]);
 
@@ -179,16 +203,19 @@ describe("AgcDbAccessService", () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
         const result = await service.getAIDigestResultsByTopicIds([]);
 
         expect(result.size).toBe(0);
         expect(mockCommonDBService.all).not.toHaveBeenCalled();
     });
 
-    it("批量存储摘要结果应使用事务", async () => {
+    it("批量存储摘要结果应按 session 幂等提交", async () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.get.mockResolvedValue({ topicCount: 1 });
         await service.storeAIDigestResults([
             {
                 topicId: "topic-1",
@@ -210,17 +237,18 @@ describe("AgcDbAccessService", () => {
             }
         ]);
 
-        expect(mockCommonDBService.run.mock.calls[0][0]).toBe("BEGIN IMMEDIATE TRANSACTION");
-        expect(mockCommonDBService.run.mock.calls[mockCommonDBService.run.mock.calls.length - 1][0]).toBe(
-            "COMMIT"
-        );
-        expect(mockCommonDBService.run).toHaveBeenCalledTimes(4);
+        const runSqlList = mockCommonDBService.run.mock.calls.map(call => call[0] as string);
+
+        expect(runSqlList.filter(sql => sql === "BEGIN IMMEDIATE TRANSACTION")).toHaveLength(2);
+        expect(runSqlList.filter(sql => sql === "COMMIT")).toHaveLength(2);
+        expect(runSqlList.some(sql => sql.includes("INSERT INTO ai_digest_sessions"))).toBe(true);
     });
 
     it("非兴趣排序应按 timeEnd 与 updateTime 降序", async () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
         await service.getLatestTopicRecordsPageByTimeRange({
             timeStart: 100,
             timeEnd: 200,
@@ -238,6 +266,8 @@ describe("AgcDbAccessService", () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.get.mockResolvedValue({ topicCount: 1 });
         await service.commitSessionDigest("session-1", [
             {
                 topicId: "topic-1",
@@ -253,18 +283,28 @@ describe("AgcDbAccessService", () => {
         const calls = mockCommonDBService.run.mock.calls;
 
         expect(calls[0][0]).toBe("BEGIN IMMEDIATE TRANSACTION");
-        expect(calls[1][0]).toContain("DELETE FROM ai_digest_results WHERE sessionId = ?");
-        expect(calls[1][1]).toEqual(["session-1"]);
-        expect(calls[2][0]).toContain("INSERT INTO ai_digest_results");
-        expect(calls[3][0]).toContain("INSERT INTO ai_digest_sessions");
-        expect(calls[3][1]).toEqual(["session-1", "success", 1, expect.any(Number)]);
-        expect(calls[4][0]).toBe("COMMIT");
+        expect(calls.some(call => String(call[0]).includes("INSERT INTO ai_digest_results"))).toBe(true);
+        const statusCall = calls.find(call => String(call[0]).includes("INSERT INTO ai_digest_sessions"));
+
+        expect(statusCall?.[1]).toEqual([
+            "session-1",
+            "success",
+            1,
+            expect.any(Number),
+            null,
+            null,
+            null,
+            null,
+            null
+        ]);
+        expect(calls[calls.length - 1][0]).toBe("COMMIT");
     });
 
     it("commitSessionDigest 对 sessionId 不一致的结果应抛错且不写库", async () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
 
         await expect(
             service.commitSessionDigest("session-1", [
@@ -286,22 +326,113 @@ describe("AgcDbAccessService", () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
         await service.markSessionEmpty("session-empty");
 
         const calls = mockCommonDBService.run.mock.calls;
 
         expect(calls[0][0]).toBe("BEGIN IMMEDIATE TRANSACTION");
-        expect(calls[1][0]).toContain("DELETE FROM ai_digest_results WHERE sessionId = ?");
-        expect(calls[2][0]).toContain("INSERT INTO ai_digest_sessions");
-        expect(calls[2][1]).toEqual(["session-empty", "empty", 0, expect.any(Number)]);
-        expect(calls[3][0]).toBe("COMMIT");
+        expect(calls.some(call => String(call[0]).includes("DELETE FROM ai_digest_results"))).toBe(false);
+        const statusCall = calls.find(call => String(call[0]).includes("INSERT INTO ai_digest_sessions"));
+
+        expect(statusCall?.[1]).toEqual([
+            "session-empty",
+            "empty",
+            0,
+            expect.any(Number),
+            null,
+            null,
+            null,
+            null,
+            null
+        ]);
+        expect(calls[calls.length - 1][0]).toBe("COMMIT");
         expect(calls.some(call => String(call[0]).includes("INSERT INTO ai_digest_results"))).toBe(false);
+    });
+
+    it("tryClaimSessionForDigest 应原子写入 processing 状态", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.get.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ topicCount: 0 });
+
+        const claimed = await service.tryClaimSessionForDigest("session-claim", {
+            messageCount: 3,
+            timeStart: 100,
+            timeEnd: 200
+        });
+
+        const statusCall = mockCommonDBService.run.mock.calls.find(call =>
+            String(call[0]).includes("INSERT INTO ai_digest_sessions")
+        );
+
+        expect(claimed).toBe(true);
+        expect(statusCall?.[1]).toEqual([
+            "session-claim",
+            "processing",
+            0,
+            expect.any(Number),
+            expect.any(Number),
+            null,
+            3,
+            100,
+            200
+        ]);
+    });
+
+    it("tryClaimSessionForDigest 遇到未过期 processing 应拒绝抢占", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.get.mockResolvedValueOnce({
+            status: "processing",
+            updateTime: Date.now(),
+            processingStartedAt: Date.now()
+        });
+
+        const claimed = await service.tryClaimSessionForDigest("session-claim", {
+            messageCount: 1,
+            timeStart: 100,
+            timeEnd: 100
+        });
+
+        expect(claimed).toBe(false);
+        expect(
+            mockCommonDBService.run.mock.calls.some(call =>
+                String(call[0]).includes("INSERT INTO ai_digest_sessions")
+            )
+        ).toBe(false);
+    });
+
+    it("deduplicateTopicTitles 应删除重复标题和兴趣分", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValue([{ topicId: "old-topic" }]);
+
+        const deletedTopicIds = await service.deduplicateTopicTitles();
+
+        expect(deletedTopicIds).toEqual(["old-topic"]);
+        expect(
+            mockCommonDBService.run.mock.calls.some(call =>
+                String(call[0]).includes("DELETE FROM interset_score_results")
+            )
+        ).toBe(true);
+        expect(
+            mockCommonDBService.run.mock.calls.some(call =>
+                String(call[0]).includes("DELETE FROM ai_digest_results")
+            )
+        ).toBe(true);
     });
 
     it("isSessionIdProcessed 命中结果表或状态表即视为已处理", async () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
 
         mockCommonDBService.get.mockResolvedValueOnce({ processed: 1 });
         await expect(service.isSessionIdProcessed("s1")).resolves.toBe(true);
@@ -319,6 +450,7 @@ describe("AgcDbAccessService", () => {
         const service = new AgcDbAccessService();
 
         await service.init();
+        vi.clearAllMocks();
 
         let activeTxn = 0;
         let maxActiveTxn = 0;

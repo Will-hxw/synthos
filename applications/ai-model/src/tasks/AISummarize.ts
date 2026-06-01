@@ -13,11 +13,13 @@ import getRandomHash from "@root/common/util/math/getRandomHash";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
 
 import { IMSummaryCtxBuilder } from "../context/ctxBuilders/IMSummaryCtxBuilder";
+import { AI_MODEL_TOKENS } from "../di/tokens";
 import {
     PooledTextGeneratorService,
     PooledTask,
     PooledTaskResult
 } from "../services/generators/text/PooledTextGeneratorService";
+import { VectorDBManagerService } from "../services/embedding/VectorDBManagerService";
 
 const OPEN_SESSION_DELAY_MS = 10 * 60 * 1000;
 const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 50;
@@ -33,7 +35,9 @@ export class AISummarizeTaskHandler {
     public constructor(
         @inject(COMMON_TOKENS.ConfigManagerService) private configManagerService: ConfigManagerService,
         @inject(COMMON_TOKENS.ImDbAccessService) private imDbAccessService: ImDbAccessService,
-        @inject(COMMON_TOKENS.AgcDbAccessService) private agcDbAccessService: AgcDbAccessService
+        @inject(COMMON_TOKENS.AgcDbAccessService) private agcDbAccessService: AgcDbAccessService,
+        @inject(AI_MODEL_TOKENS.VectorDBManagerService)
+        private vectorDBManagerService: VectorDBManagerService
     ) {}
 
     /**
@@ -191,6 +195,10 @@ export class AISummarizeTaskHandler {
                             this.LOGGER.error(
                                 `[${completedCount}/${allTasks.length}] session ${sessionId} 生成摘要失败，错误信息为：${result.error}, 跳过该session`
                             );
+                            await this.agcDbAccessService.markSessionFailed(
+                                sessionId,
+                                this._formatErrorMessage(result.error)
+                            );
 
                             return;
                         }
@@ -230,7 +238,9 @@ export class AISummarizeTaskHandler {
 
                             // 合法空摘要：写入空终态，避免该 session 被无限重复摘要
                             if (digestResults.length === 0) {
-                                await this.agcDbAccessService.markSessionEmpty(sessionId);
+                                const deletedTopicIds = await this.agcDbAccessService.markSessionEmpty(sessionId);
+
+                                this.vectorDBManagerService.deleteEmbeddingsIfExists(deletedTopicIds);
                                 this.LOGGER.info(
                                     `[${completedCount}/${allTasks.length}] session ${sessionId} 无有效话题，标记为空摘要`
                                 );
@@ -239,13 +249,22 @@ export class AISummarizeTaskHandler {
                             }
 
                             // 幂等提交：按 session 替换旧话题并写入成功终态
-                            await this.agcDbAccessService.commitSessionDigest(sessionId, digestResults);
+                            const deletedTopicIds = await this.agcDbAccessService.commitSessionDigest(
+                                sessionId,
+                                digestResults
+                            );
+
+                            this.vectorDBManagerService.deleteEmbeddingsIfExists(deletedTopicIds);
                             this.LOGGER.success(
                                 `[${completedCount}/${allTasks.length}] session ${sessionId} 生成并存储 ${digestResults.length} 个话题`
                             );
                         } catch (error) {
                             this.LOGGER.error(
                                 `session ${sessionId} 处理结果失败，错误信息为：${error}, 跳过该session`
+                            );
+                            await this.agcDbAccessService.markSessionFailed(
+                                sessionId,
+                                this._formatErrorMessage(error)
                             );
                         }
                     }
@@ -301,22 +320,42 @@ export class AISummarizeTaskHandler {
             return;
         }
 
-        if (await this.agcDbAccessService.isSessionIdProcessed(sessionId)) {
-            return;
-        }
-
         // session 消息可能很多，用 reduce 取最大时间戳，避免 Math.max(...arr) 大数组展开触发 RangeError
-        const sessionEndTime = sessionMessages.reduce(
-            (max, msg) => (msg.timestamp > max ? msg.timestamp : max),
-            sessionMessages[0].timestamp
+        const sessionTimeRange = sessionMessages.reduce(
+            (range, msg) => ({
+                timeStart: msg.timestamp < range.timeStart ? msg.timestamp : range.timeStart,
+                timeEnd: msg.timestamp > range.timeEnd ? msg.timestamp : range.timeEnd
+            }),
+            {
+                timeStart: sessionMessages[0].timestamp,
+                timeEnd: sessionMessages[0].timestamp
+            }
         );
 
-        if (sessionEndTime > readyBeforeTimestamp) {
+        if (sessionTimeRange.timeEnd > readyBeforeTimestamp) {
             this.LOGGER.info(`session ${sessionId} 距离任务结束时间过近，延迟到后续任务处理`);
 
             return;
         }
 
+        const claimed = await this.agcDbAccessService.tryClaimSessionForDigest(sessionId, {
+            messageCount: sessionMessages.length,
+            timeStart: sessionTimeRange.timeStart,
+            timeEnd: sessionTimeRange.timeEnd
+        });
+
+        if (!claimed) {
+            return;
+        }
+
         candidateSessions.set(sessionId, sessionMessages);
+    }
+
+    private _formatErrorMessage(error: unknown): string {
+        if (error instanceof Error) {
+            return error.message;
+        }
+
+        return String(error);
     }
 }
