@@ -314,35 +314,36 @@ export class TextGeneratorService extends Disposable {
         const config = await this.configManagerService.getCurrentConfig();
         // 从第一个开始尝试，如果失败了就会尝试下一个
         const modelCandidates = [
-            ...duplicateElements(config.ai.pinnedModels, 2), // 失败重复机制：每个模型重复2次
+            ...duplicateElements(config.ai.pinnedModels, 3), // 失败重复机制：每个模型重复3次
             ...modelNames
         ];
         let resultStr = "";
         let selectedModelName = "";
 
         for (const modelName of modelCandidates) {
-            try {
-                const generatedResultStr = await this.doGenerateTextStream(modelName, input);
+            let rawOutput = "";
 
-                if (generatedResultStr) {
-                    let validatedResultStr = generatedResultStr;
+            try {
+                rawOutput = await this.doGenerateTextStream(modelName, input);
+
+                if (rawOutput) {
+                    let validatedResultStr = rawOutput;
 
                     // 尝试parseJson，如果不符合json格式，会直接抛错
                     if (checkJsonFormat) {
                         try {
-                            validatedResultStr = this._validateJsonResult(generatedResultStr);
+                            validatedResultStr = this._validateJsonResult(rawOutput);
                         } catch (parseError) {
-                            if (!this._looksLikeJsonPayload(generatedResultStr)) {
+                            if (!this._looksLikeJsonPayload(rawOutput)) {
+                                this.LOGGER.warning(
+                                    `模型 ${modelName} 返回非 JSON 内容（前200字符）：${rawOutput.slice(0, 200)}`
+                                );
                                 throw parseError;
                             }
                             this.LOGGER.warning(
                                 `模型 ${modelName} 生成结果不是合法 JSON，错误信息为：${this._formatUnknownError(parseError)}，尝试修复 JSON`
                             );
-                            validatedResultStr = await this._repairJsonResult(
-                                modelName,
-                                generatedResultStr,
-                                parseError
-                            );
+                            validatedResultStr = await this._repairJsonResult(modelName, rawOutput, parseError);
                         }
                     }
                     resultStr = validatedResultStr;
@@ -352,8 +353,10 @@ export class TextGeneratorService extends Disposable {
                     throw new Error(`生成的摘要为空`);
                 }
             } catch (error) {
+                const rawPreview = rawOutput ? ` 原始输出前200字符: ${rawOutput.slice(0, 200)}` : "";
+
                 this.LOGGER.warning(
-                    `模型 ${modelName} 生成摘要失败，错误信息为：${this._formatUnknownError(error)}，尝试下一个模型`
+                    `模型 ${modelName} 生成摘要失败，错误信息为：${this._formatUnknownError(error)}，尝试下一个模型。${rawPreview}`
                 );
                 await sleep(10000); // 等待10秒
                 continue; // 跳过当前模型，尝试下一个
