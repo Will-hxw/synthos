@@ -7,7 +7,6 @@ import ErrorReasons from "@root/common/contracts/ErrorReasons";
 import Logger from "@root/common/util/Logger";
 import { Disposable } from "@root/common/util/lifecycle/Disposable";
 import { mustInitBeforeUse } from "@root/common/util/lifecycle/mustInitBeforeUse";
-import { duplicateElements } from "@root/common/util/core/duplicateElements";
 import { sleep } from "@root/common/util/promisify/sleep";
 import { COMMON_TOKENS } from "@root/common/di/tokens";
 
@@ -159,7 +158,8 @@ export class TextGeneratorService extends Disposable {
         content: string;
     }> {
         const config = await this.configManagerService.getCurrentConfig();
-        const modelCandidates = [...duplicateElements(config.ai.pinnedModels, 2), ...modelNames];
+        const deduped = [...new Set([...config.ai.pinnedModels, ...modelNames])];
+        const modelCandidates = [...deduped, ...deduped, ...deduped];
 
         let resultStr = "";
         let selectedModelName = "";
@@ -254,6 +254,40 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
+     * 判断模型输出是否为供应商/网关在 HTTP 200 下返回的拒绝类纯文本。
+     * 这些文本不是非法 JSON,而是上游风控/审核的确定性拒绝,
+     * 对同一模型重试和 JSON 修复均无意义,应立即切换到下一个候选模型。
+     */
+    private _isProviderRejection(content: string): boolean {
+        const text = content.trim().toLowerCase();
+
+        if (text.startsWith("{") || text.startsWith("[") || text.startsWith("```")) {
+            return false;
+        }
+
+        return [
+            "considered high risk",
+            "request was rejected",
+            "content policy",
+            "content_filter",
+            "risk control"
+        ].some(kw => text.includes(kw));
+    }
+
+    /**
+     * 判断错误是否为速率限制(429),仅此类错误需要退避后重试。
+     */
+    private _isRateLimitError(error: unknown): boolean {
+        if (error instanceof Error) {
+            const msg = error.message.toLowerCase();
+
+            return msg.includes("429") || msg.includes("rate limit") || msg.includes("too many requests");
+        }
+
+        return false;
+    }
+
+    /**
      * 判断模型输出是否像 JSON，避免把普通错误文本包装成合法 JSON
      * @param content 模型返回内容
      * @returns 是否像 JSON 对象、数组或 JSON 代码围栏
@@ -312,24 +346,37 @@ export class TextGeneratorService extends Disposable {
         content: string;
     }> {
         const config = await this.configManagerService.getCurrentConfig();
-        // 从第一个开始尝试，如果失败了就会尝试下一个
-        const modelCandidates = [
-            ...duplicateElements(config.ai.pinnedModels, 3), // 失败重复机制：每个模型重复3次
-            ...modelNames
-        ];
+        // 去重后整表重复3次：单次风控拒绝不代表下次还拒，给每个模型多次机会
+        const deduped = [...new Set([...config.ai.pinnedModels, ...modelNames])];
+        const modelCandidates = [...deduped, ...deduped, ...deduped];
         let resultStr = "";
         let selectedModelName = "";
+        const MAX_RATE_LIMIT_RETRIES = 2;
 
         for (const modelName of modelCandidates) {
-            let rawOutput = "";
+            let rateLimitRetries = 0;
 
-            try {
-                rawOutput = await this.doGenerateTextStream(modelName, input);
+            // 内层循环仅处理限流重试；其余错误直接换下一个候选模型
+            while (true) {
+                let rawOutput = "";
 
-                if (rawOutput) {
+                try {
+                    rawOutput = await this.doGenerateTextStream(modelName, input);
+
+                    if (!rawOutput) {
+                        throw new Error(`生成的摘要为空`);
+                    }
+
+                    // 风控/网关拒绝：不可通过重试解决，立即切换到下一个模型
+                    if (checkJsonFormat && this._isProviderRejection(rawOutput)) {
+                        this.LOGGER.info(
+                            `模型 ${modelName} 被上游网关/风控拒绝（前200字符）：${rawOutput.slice(0, 200)}，切换到下一个模型`
+                        );
+                        break;
+                    }
+
                     let validatedResultStr = rawOutput;
 
-                    // 尝试parseJson，如果不符合json格式，会直接抛错
                     if (checkJsonFormat) {
                         try {
                             validatedResultStr = this._validateJsonResult(rawOutput);
@@ -346,22 +393,34 @@ export class TextGeneratorService extends Disposable {
                             validatedResultStr = await this._repairJsonResult(modelName, rawOutput, parseError);
                         }
                     }
+
                     resultStr = validatedResultStr;
                     selectedModelName = modelName;
-                    break; // 如果成功，跳出循环
-                } else {
-                    throw new Error(`生成的摘要为空`);
-                }
-            } catch (error) {
-                const rawPreview = rawOutput ? ` 原始输出前200字符: ${rawOutput.slice(0, 200)}` : "";
+                    break;
+                } catch (error) {
+                    const rawPreview = rawOutput ? ` 原始输出前200字符: ${rawOutput.slice(0, 200)}` : "";
 
-                this.LOGGER.warning(
-                    `模型 ${modelName} 生成摘要失败，错误信息为：${this._formatUnknownError(error)}，尝试下一个模型。${rawPreview}`
-                );
-                await sleep(10000); // 等待10秒
-                continue; // 跳过当前模型，尝试下一个
+                    if (this._isRateLimitError(error) && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+                        rateLimitRetries++;
+                        this.LOGGER.warning(
+                            `模型 ${modelName} 触发速率限制，等待后重试（${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}）${rawPreview}`
+                        );
+                        await sleep(10000);
+                        continue;
+                    }
+
+                    this.LOGGER.warning(
+                        `模型 ${modelName} 生成摘要失败，错误信息为：${this._formatUnknownError(error)}，尝试下一个模型。${rawPreview}`
+                    );
+                    break;
+                }
+            }
+
+            if (resultStr) {
+                break;
             }
         }
+
         if (!resultStr) {
             throw new Error(`所有模型都生成摘要失败，跳过`);
         }

@@ -209,4 +209,70 @@ describe("TextGeneratorService", () => {
         });
         expect(doGenerateTextStream).toHaveBeenCalledTimes(3);
     });
+
+    it("网关风控拒绝(high risk)应跳过 JSON 修复并直接换下一个模型", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce("The request was rejected because it was considered high risk")
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        const result = await service.generateTextWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成 JSON",
+            true
+        );
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: '[{"topic":"ok"}]'
+        });
+        // 风控拒绝不应触发 JSON 修复（_repairJsonResult 内部也会调 doGenerateTextStream）
+        expect(doGenerateTextStream).toHaveBeenCalledTimes(2);
+    });
+
+    it("网关风控拒绝应记 info 日志而非 warning", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce("The request was rejected because it was considered high risk")
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        await service.generateTextWithModelCandidates(["bad-model", "good-model"], "生成 JSON", true);
+
+        // 应有 info 日志记录风控拒绝
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("被上游网关/风控拒绝"));
+    });
+
+    it("非限流错误不应触发 sleep 退避", async () => {
+        const { sleep } = await import("@root/common/util/promisify/sleep");
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockRejectedValueOnce(new Error("ALL_MODELS_FAILED"))
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        await service.generateTextWithModelCandidates(["bad-model", "good-model"], "生成 JSON", true);
+
+        // 非限流错误不应调用 sleep
+        expect(sleep).not.toHaveBeenCalled();
+    });
+
+    it("速率限制(429)错误应触发 sleep 并重试同一模型", async () => {
+        const { sleep } = await import("@root/common/util/promisify/sleep");
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockRejectedValueOnce(new Error("429 Too Many Requests"))
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        const result = await service.generateTextWithModelCandidates(["limited-model"], "生成 JSON", true);
+
+        expect(result).toEqual({
+            selectedModelName: "limited-model",
+            content: '[{"topic":"ok"}]'
+        });
+        // 限流错误应触发 sleep 退避
+        expect(sleep).toHaveBeenCalled();
+    });
 });
