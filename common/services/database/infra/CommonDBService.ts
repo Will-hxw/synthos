@@ -13,6 +13,8 @@ import { mustInitBeforeUse } from "../../../util/lifecycle/mustInitBeforeUse";
 import { COMMON_TOKENS } from "../../../di/tokens";
 sqlite3.verbose();
 
+const COMMON_DB_BUSY_TIMEOUT_MS = 10_000;
+
 /**
  * 通用数据库服务
  * 提供 SQLite 数据库的基础操作能力
@@ -50,9 +52,15 @@ export class CommonDBService extends Disposable {
             throw err;
         }
         await this.db.open(path.join(config.commonDatabase.dbBasePath, "common_database.db"));
+        await this._initPragmas();
         if (initialSQL) {
             await this.db.exec(initialSQL);
         }
+    }
+
+    private async _initPragmas(): Promise<void> {
+        await this.db.exec(`PRAGMA busy_timeout = ${COMMON_DB_BUSY_TIMEOUT_MS};`);
+        await this.db.exec("PRAGMA journal_mode = WAL;");
     }
 
     // ========== 写操作（仅活跃库） ==========
