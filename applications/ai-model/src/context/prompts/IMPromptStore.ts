@@ -54,6 +54,44 @@ export class IMPromptStore {
                     5. 字符串内容中不要输出未转义的换行控制字符；如需表达换行，请改写为普通中文句子
                     6. 多个对象之间用逗号分隔，不要输出尾随逗号、注释或多余字段
                     7. 输出前请自检一次：整体内容必须可以被 JSON.parse 成功解析
+                    8. 以下失败形态一律不允许：Markdown 代码围栏、残缺代码围栏、JSON 外说明文字、尾随逗号、字符串内部未转义的英文双引号、字符串内部真实换行、未闭合的数组/对象/字符串
+
+                    错误示例（不要这样输出，detail 内部的英文双引号没有转义）：
+                    [
+                    {
+                        "topic": "模型报错讨论",
+                        "contributors": ["用户1"],
+                        "detail": "用户1说 "The request was rejected because it was considered high risk"，这是原始报错文本。"
+                    }
+                    ]
+
+                    错误示例（不要这样输出，最后一个对象后存在尾随逗号）：
+                    [
+                    {
+                        "topic": "模型报错讨论",
+                        "contributors": ["用户1"],
+                        "detail": "用户1讨论了模型返回错误。"
+                    },
+                    ]
+
+                    错误示例（不要这样输出，存在残缺 Markdown 代码围栏或 JSON 外文字）：
+                    json
+                    [
+                    {
+                        "topic": "模型报错讨论",
+                        "contributors": ["用户1"],
+                        "detail": "用户1讨论了模型返回错误。"
+                    }
+                    ]
+
+                    正确示例：
+                    [
+                    {
+                        "topic": "模型报错讨论",
+                        "contributors": ["用户1"],
+                        "detail": "用户1说 \\"The request was rejected because it was considered high risk\\"，这是原始报错文本。"
+                    }
+                    ]
 
                     请严格按照以下JSON格式返回，确保可以被标准JSON解析器解析：
                     [

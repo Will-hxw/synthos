@@ -1,6 +1,9 @@
 import "reflect-metadata";
+import { mkdtemp, readdir, readFile, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TextGeneratorService } from "../services/generators/text/TextGeneratorService";
 
@@ -30,20 +33,51 @@ vi.mock("@root/common/util/promisify/sleep", () => ({
 
 describe("TextGeneratorService", () => {
     let service: TextGeneratorService;
+    let tempLogDir: string;
     const mockConfigManagerService = {
         getCurrentConfig: vi.fn()
     };
 
     beforeEach(async () => {
         vi.clearAllMocks();
+        tempLogDir = await mkdtemp(join(tmpdir(), "text-generator-service-"));
         mockConfigManagerService.getCurrentConfig.mockResolvedValue({
             ai: {
                 pinnedModels: []
+            },
+            logger: {
+                logDirectory: tempLogDir
             }
         });
         service = new TextGeneratorService(mockConfigManagerService as any);
         await service.init();
     });
+
+    afterEach(async () => {
+        await rm(tempLogDir, { recursive: true, force: true });
+    });
+
+    async function readJsonFailureRecords(): Promise<Array<Record<string, unknown>>> {
+        const failureDir = join(tempLogDir, "ai-model-json-failures");
+
+        try {
+            const files = await readdir(failureDir);
+            const records: Array<Record<string, unknown>> = [];
+
+            for (const file of files.filter(item => item.endsWith(".jsonl"))) {
+                const content = await readFile(join(failureDir, file), "utf8");
+                const lines = content.split("\n").filter(line => line.trim().length > 0);
+
+                for (const line of lines) {
+                    records.push(JSON.parse(line) as Record<string, unknown>);
+                }
+            }
+
+            return records;
+        } catch {
+            return [];
+        }
+    }
 
     it("JSON 校验场景应剥离完整包裹的 JSON 代码围栏", async () => {
         vi.spyOn(service as any, "doGenerateTextStream").mockResolvedValue('```json\n[{"ok":true}]\n```');
@@ -251,9 +285,150 @@ describe("TextGeneratorService", () => {
         expect(repairLog).toBeDefined();
         expect(repairLog!).toContain("原始校验错误为");
         expect(repairLog!).toContain("修复错误为：Error: JSON 修复请求被上游网关/风控拒绝");
+        expect(repairLog!).toContain("阶段=repair_provider_rejection");
         expect(repairLog!).toContain('原始输出前200字符：[{"topic":"AI讨论","detail":"输出被截断"');
-        expect(repairLog!).toContain("修复输出前200字符：The request was rejected because it was considered high risk");
+        expect(repairLog!).toContain(
+            "修复输出前200字符：The request was rejected because it was considered high risk"
+        );
+        expect(repairLog!).toContain("完整失败样本：");
         expect(repairLog!).not.toContain("\n");
+    });
+
+    it("未转义双引号导致的 JSON 校验失败应保存完整原始输出", async () => {
+        const rawOutput = '[{"topic":"报价讨论","detail":"他说 "可以接受""}]';
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce(rawOutput)
+            .mockResolvedValueOnce('[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]');
+
+        const result = await service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true, {
+            groupId: "group-1",
+            sessionId: "session-1"
+        });
+        const records = await readJsonFailureRecords();
+
+        expect(result.content).toBe('[{"topic":"报价讨论","detail":"他说 \\"可以接受\\""}]');
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+            modelName: "mock-model",
+            stage: "raw_validation_failed",
+            rawOutput,
+            rawOutputLength: rawOutput.length,
+            repairedOutput: "",
+            repairedOutputLength: 0,
+            selectedFallbackAction: "repair_json",
+            groupId: "group-1",
+            sessionId: "session-1"
+        });
+    });
+
+    it("尾随逗号导致的 JSON 校验失败应保存完整原始输出", async () => {
+        const rawOutput = '[{"topic":"尾随逗号","detail":"内容"},]';
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce(rawOutput)
+            .mockResolvedValueOnce('[{"topic":"尾随逗号","detail":"内容"}]');
+
+        await service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true);
+        const records = await readJsonFailureRecords();
+
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+            modelName: "mock-model",
+            stage: "raw_validation_failed",
+            rawOutput,
+            rawOutputLength: rawOutput.length,
+            selectedFallbackAction: "repair_json"
+        });
+    });
+
+    it("残缺代码围栏和修复阶段风控拒绝都应保存 JSONL 样本", async () => {
+        const rawOutput = '```json\n[{"topic":"围栏残缺","detail":"内容"}]';
+        const repairedOutput = "The request was rejected because it was considered high risk";
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce(rawOutput)
+            .mockResolvedValueOnce(repairedOutput)
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        const result = await service.generateTextWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成 JSON",
+            true
+        );
+        const records = await readJsonFailureRecords();
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: '[{"topic":"ok"}]'
+        });
+        expect(records.map(record => record.stage)).toEqual([
+            "raw_validation_failed",
+            "repair_provider_rejection"
+        ]);
+        expect(records[0]).toMatchObject({
+            modelName: "bad-model",
+            rawOutput,
+            rawOutputLength: rawOutput.length,
+            repairedOutput: "",
+            selectedFallbackAction: "repair_json"
+        });
+        expect(records[1]).toMatchObject({
+            modelName: "bad-model",
+            rawOutput,
+            rawOutputLength: rawOutput.length,
+            repairedOutput,
+            repairedOutputLength: repairedOutput.length,
+            selectedFallbackAction: "switch_model"
+        });
+    });
+
+    it("JSON 失败日志应包含阶段、长度、保存路径且预览不含真实换行", async () => {
+        const rawOutput = '[{"topic":"AI讨论",\n"detail":"输出被截断"';
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream
+            .mockResolvedValueOnce(rawOutput)
+            .mockResolvedValueOnce('[{"topic":"AI讨论",\n"detail":"仍然失败"')
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        await service.generateTextWithModelCandidates(["bad-model", "good-model"], "生成 JSON", true);
+
+        const repairLog = mockLogger.warning.mock.calls
+            .map(call => String(call[0]))
+            .find(message => message.includes("阶段=repair_validation_failed"));
+
+        expect(repairLog).toBeDefined();
+        expect(repairLog!).toContain(`原始输出长度=${rawOutput.length}`);
+        expect(repairLog!).toContain("修复输出长度=");
+        expect(repairLog!).toContain("完整失败样本：");
+        expect(repairLog!).toContain("ai-model-json-failures");
+        expect(repairLog!).not.toContain("\n");
+        expect(repairLog!).toContain("\\n");
+    });
+
+    it("失败样本落盘失败不应中断模型 fallback", async () => {
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        vi.spyOn(service as any, "_saveJsonFailureRecord").mockResolvedValue(null);
+        doGenerateTextStream
+            .mockResolvedValueOnce("The request was rejected because it was considered high risk")
+            .mockResolvedValueOnce('[{"topic":"ok"}]');
+
+        const result = await service.generateTextWithModelCandidates(
+            ["bad-model", "good-model"],
+            "生成 JSON",
+            true
+        );
+
+        expect(result).toEqual({
+            selectedModelName: "good-model",
+            content: '[{"topic":"ok"}]'
+        });
+        expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("完整失败样本：保存失败"));
     });
 
     it("网关风控拒绝(high risk)应跳过 JSON 修复并直接换下一个模型", async () => {

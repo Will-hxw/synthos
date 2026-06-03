@@ -1,4 +1,7 @@
 import "reflect-metadata";
+import { appendFile, mkdir } from "fs/promises";
+import { join } from "path";
+
 import { injectable, inject } from "tsyringe";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { ChatOpenAI } from "@langchain/openai";
@@ -12,12 +15,40 @@ import { COMMON_TOKENS } from "@root/common/di/tokens";
 
 import { JsonPromptStore } from "../../../context/prompts/JsonPromptStore";
 
+type JsonFailureStage =
+    | "raw_validation_failed"
+    | "raw_non_json"
+    | "raw_provider_rejection"
+    | "repair_validation_failed"
+    | "repair_provider_rejection";
+
+export interface JsonFailureDiagnosticContext {
+    groupId?: string;
+    sessionId?: string;
+}
+
+interface JsonFailureRecord {
+    timestamp: string;
+    modelName: string;
+    stage: JsonFailureStage;
+    parseError: string;
+    originalParseError?: string;
+    rawOutput: string;
+    rawOutputLength: number;
+    repairedOutput: string;
+    repairedOutputLength: number;
+    selectedFallbackAction: string;
+    groupId?: string;
+    sessionId?: string;
+}
+
 class JsonRepairFailureError extends Error {
     public constructor(
         public readonly originalParseError: unknown,
         public readonly repairError: unknown,
         public readonly invalidJson: string,
-        public readonly repairedResultStr: string
+        public readonly repairedResultStr: string,
+        public readonly repairStage: JsonFailureStage
     ) {
         super("JSON 修复失败");
         this.name = "JsonRepairFailureError";
@@ -340,6 +371,79 @@ export class TextGeneratorService extends Disposable {
             .slice(0, maxLength);
     }
 
+    private _getDateString(date: Date): string {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+
+        return `${year}-${month}-${day}`;
+    }
+
+    private async _saveJsonFailureRecord(params: {
+        logDirectory: string;
+        modelName: string;
+        stage: JsonFailureStage;
+        parseError: unknown;
+        originalParseError?: unknown;
+        rawOutput: string;
+        repairedOutput?: string;
+        selectedFallbackAction: string;
+        diagnosticContext?: JsonFailureDiagnosticContext;
+    }): Promise<string | null> {
+        const timestamp = new Date();
+        const failureDir = join(params.logDirectory, "ai-model-json-failures");
+        const filePath = join(failureDir, `${this._getDateString(timestamp)}.jsonl`);
+        const repairedOutput = params.repairedOutput ?? "";
+        const record: JsonFailureRecord = {
+            timestamp: timestamp.toISOString(),
+            modelName: params.modelName,
+            stage: params.stage,
+            parseError: this._formatUnknownError(params.parseError),
+            rawOutput: params.rawOutput,
+            rawOutputLength: params.rawOutput.length,
+            repairedOutput,
+            repairedOutputLength: repairedOutput.length,
+            selectedFallbackAction: params.selectedFallbackAction,
+            groupId: params.diagnosticContext?.groupId,
+            sessionId: params.diagnosticContext?.sessionId
+        };
+
+        if (params.originalParseError !== undefined) {
+            record.originalParseError = this._formatUnknownError(params.originalParseError);
+        }
+
+        try {
+            await mkdir(failureDir, { recursive: true });
+            await appendFile(filePath, JSON.stringify(record) + "\n", "utf8");
+
+            return filePath;
+        } catch (error) {
+            this.LOGGER.warning(
+                `JSON 失败样本落盘失败，阶段=${params.stage}，模型=${params.modelName}，错误信息为：${this._formatUnknownError(error)}`
+            );
+
+            return null;
+        }
+    }
+
+    private _formatJsonFailureLog(params: {
+        modelName: string;
+        stage: JsonFailureStage;
+        parseError: unknown;
+        rawOutput: string;
+        repairedOutput?: string;
+        selectedFallbackAction: string;
+        savedFilePath: string | null;
+    }): string {
+        const repairedPart =
+            params.repairedOutput !== undefined
+                ? `，修复输出长度=${params.repairedOutput.length}，修复输出前200字符：${this._formatPreview(params.repairedOutput, 200)}`
+                : "";
+        const savedPath = params.savedFilePath ?? "保存失败";
+
+        return `模型 ${params.modelName} JSON 输出诊断，阶段=${params.stage}，错误信息为：${this._formatUnknownError(params.parseError)}，原始输出长度=${params.rawOutput.length}，原始输出前200字符：${this._formatPreview(params.rawOutput, 200)}${repairedPart}，完整失败样本：${savedPath}，后续动作=${params.selectedFallbackAction}`;
+    }
+
     /**
      * 尝试用同一模型修复非法 JSON 输出
      * @param modelName 模型名称
@@ -357,12 +461,38 @@ export class TextGeneratorService extends Disposable {
             repairedResultStr = await this.doGenerateTextStream(modelName, prompt);
 
             if (this._isProviderRejection(repairedResultStr)) {
-                throw new Error("JSON 修复请求被上游网关/风控拒绝");
+                throw new JsonRepairFailureError(
+                    parseError,
+                    new Error("JSON 修复请求被上游网关/风控拒绝"),
+                    invalidJson,
+                    repairedResultStr,
+                    "repair_provider_rejection"
+                );
             }
 
-            return this._validateJsonResult(repairedResultStr);
+            try {
+                return this._validateJsonResult(repairedResultStr);
+            } catch (repairError) {
+                throw new JsonRepairFailureError(
+                    parseError,
+                    repairError,
+                    invalidJson,
+                    repairedResultStr,
+                    "repair_validation_failed"
+                );
+            }
         } catch (error) {
-            throw new JsonRepairFailureError(parseError, error, invalidJson, repairedResultStr);
+            if (error instanceof JsonRepairFailureError) {
+                throw error;
+            }
+
+            throw new JsonRepairFailureError(
+                parseError,
+                error,
+                invalidJson,
+                repairedResultStr,
+                "repair_validation_failed"
+            );
         }
     }
 
@@ -376,7 +506,8 @@ export class TextGeneratorService extends Disposable {
     public async generateTextWithModelCandidates(
         modelNames: string[],
         input: string,
-        checkJsonFormat: boolean = false
+        checkJsonFormat: boolean = false,
+        diagnosticContext?: JsonFailureDiagnosticContext
     ): Promise<{
         selectedModelName: string;
         content: string;
@@ -405,8 +536,26 @@ export class TextGeneratorService extends Disposable {
 
                     // 风控/网关拒绝：不可通过重试解决，立即切换到下一个模型
                     if (checkJsonFormat && this._isProviderRejection(rawOutput)) {
+                        const error = new Error("上游网关/风控拒绝");
+                        const savedFilePath = await this._saveJsonFailureRecord({
+                            logDirectory: config.logger.logDirectory,
+                            modelName,
+                            stage: "raw_provider_rejection",
+                            parseError: error,
+                            rawOutput,
+                            selectedFallbackAction: "switch_model",
+                            diagnosticContext
+                        });
+
                         this.LOGGER.info(
-                            `模型 ${modelName} 被上游网关/风控拒绝（前200字符）：${this._formatPreview(rawOutput, 200)}，切换到下一个模型`
+                            `模型 ${modelName} 被上游网关/风控拒绝，${this._formatJsonFailureLog({
+                                modelName,
+                                stage: "raw_provider_rejection",
+                                parseError: error,
+                                rawOutput,
+                                selectedFallbackAction: "switch_model",
+                                savedFilePath
+                            })}`
                         );
                         break;
                     }
@@ -418,13 +567,47 @@ export class TextGeneratorService extends Disposable {
                             validatedResultStr = this._validateJsonResult(rawOutput);
                         } catch (parseError) {
                             if (!this._looksLikeJsonPayload(rawOutput)) {
+                                const savedFilePath = await this._saveJsonFailureRecord({
+                                    logDirectory: config.logger.logDirectory,
+                                    modelName,
+                                    stage: "raw_non_json",
+                                    parseError,
+                                    rawOutput,
+                                    selectedFallbackAction: "switch_model",
+                                    diagnosticContext
+                                });
+
                                 this.LOGGER.warning(
-                                    `模型 ${modelName} 返回非 JSON 内容（前200字符）：${this._formatPreview(rawOutput, 200)}`
+                                    this._formatJsonFailureLog({
+                                        modelName,
+                                        stage: "raw_non_json",
+                                        parseError,
+                                        rawOutput,
+                                        selectedFallbackAction: "switch_model",
+                                        savedFilePath
+                                    })
                                 );
                                 throw parseError;
                             }
+                            const savedFilePath = await this._saveJsonFailureRecord({
+                                logDirectory: config.logger.logDirectory,
+                                modelName,
+                                stage: "raw_validation_failed",
+                                parseError,
+                                rawOutput,
+                                selectedFallbackAction: "repair_json",
+                                diagnosticContext
+                            });
+
                             this.LOGGER.warning(
-                                `模型 ${modelName} 生成结果不是合法 JSON，错误信息为：${this._formatUnknownError(parseError)}，尝试修复 JSON`
+                                `${this._formatJsonFailureLog({
+                                    modelName,
+                                    stage: "raw_validation_failed",
+                                    parseError,
+                                    rawOutput,
+                                    selectedFallbackAction: "repair_json",
+                                    savedFilePath
+                                })}，尝试修复 JSON`
                             );
                             validatedResultStr = await this._repairJsonResult(modelName, rawOutput, parseError);
                         }
@@ -448,12 +631,30 @@ export class TextGeneratorService extends Disposable {
                     }
 
                     if (error instanceof JsonRepairFailureError) {
-                        const repairedPreview = error.repairedResultStr
-                            ? ` 修复输出前200字符：${this._formatPreview(error.repairedResultStr, 200)}`
-                            : " 修复输出为空或未返回";
+                        const savedFilePath = await this._saveJsonFailureRecord({
+                            logDirectory: config.logger.logDirectory,
+                            modelName,
+                            stage: error.repairStage,
+                            parseError: error.repairError,
+                            originalParseError: error.originalParseError,
+                            rawOutput: error.invalidJson,
+                            repairedOutput: error.repairedResultStr,
+                            selectedFallbackAction: "switch_model",
+                            diagnosticContext
+                        });
 
                         this.LOGGER.warning(
-                            `模型 ${modelName} JSON 修复失败，原始校验错误为：${this._formatUnknownError(error.originalParseError)}，修复错误为：${this._formatUnknownError(error.repairError)}，尝试下一个模型。 原始输出前200字符：${this._formatPreview(error.invalidJson, 200)}${repairedPreview}`
+                            `模型 ${modelName} JSON 修复失败，原始校验错误为：${this._formatUnknownError(error.originalParseError)}，修复错误为：${this._formatUnknownError(error.repairError)}，${this._formatJsonFailureLog(
+                                {
+                                    modelName,
+                                    stage: error.repairStage,
+                                    parseError: error.repairError,
+                                    rawOutput: error.invalidJson,
+                                    repairedOutput: error.repairedResultStr,
+                                    selectedFallbackAction: "switch_model",
+                                    savedFilePath
+                                }
+                            )}，尝试下一个模型`
                         );
                         break;
                     }

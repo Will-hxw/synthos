@@ -5,7 +5,7 @@ import { container } from "tsyringe";
 
 import { AI_MODEL_TOKENS } from "../../../di/tokens";
 
-import { TextGeneratorService } from "./TextGeneratorService";
+import { JsonFailureDiagnosticContext, TextGeneratorService } from "./TextGeneratorService";
 
 /**
  * 池化任务定义
@@ -17,6 +17,8 @@ export interface PooledTask<TContext> {
     modelNames: string[];
     /** 是否强行检查JSON格式 */
     checkJsonFormat?: boolean;
+    /** JSON 失败诊断上下文，用于落盘定位任务来源 */
+    diagnosticContext?: JsonFailureDiagnosticContext;
     /** 调用方自定义的上下文（用于回调时识别任务） */
     context: TContext;
 }
@@ -166,7 +168,8 @@ export class PooledTextGeneratorService extends Disposable {
                                 await this.TextGeneratorService!.generateTextWithModelCandidates(
                                     taskDef.modelNames,
                                     taskDef.input,
-                                    taskDef.checkJsonFormat
+                                    taskDef.checkJsonFormat,
+                                    taskDef.diagnosticContext
                                 );
 
                             result = {

@@ -172,6 +172,7 @@ export class AISummarizeTaskHandler {
                             input: ctx,
                             modelNames: config.groupConfigs[groupId].aiModels,
                             context: { groupId, sessionId },
+                            diagnosticContext: { groupId, sessionId },
                             checkJsonFormat: true
                         });
                     }
