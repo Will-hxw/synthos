@@ -19,6 +19,7 @@ type JsonFailureStage =
     | "raw_validation_failed"
     | "raw_non_json"
     | "raw_provider_rejection"
+    | "raw_json_with_provider_rejection_suffix"
     | "repair_validation_failed"
     | "repair_provider_rejection";
 
@@ -345,6 +346,45 @@ export class TextGeneratorService extends Disposable {
     }
 
     /**
+     * 提取被上游拒绝文本污染尾部的合法 JSON 数组前缀。
+     * 仅当 JSON 前缀可解析为数组，且剩余尾部明确是 provider rejection 文本时才接受。
+     * @param content 模型原始输出
+     * @returns 可安全使用的 JSON 数组前缀；不满足严格条件时返回 null
+     */
+    private _tryExtractJsonArrayPrefixBeforeProviderRejection(content: string): string | null {
+        const trimmedContent = content.trim();
+
+        if (!trimmedContent.startsWith("[")) {
+            return null;
+        }
+
+        for (let index = 0; index < trimmedContent.length; index++) {
+            if (trimmedContent[index] !== "]") {
+                continue;
+            }
+
+            const jsonPrefix = trimmedContent.slice(0, index + 1).trim();
+            const suffix = trimmedContent.slice(index + 1).trim();
+
+            if (suffix.length === 0 || !this._isProviderRejection(suffix)) {
+                continue;
+            }
+
+            try {
+                const parsed = JSON.parse(jsonPrefix);
+
+                if (Array.isArray(parsed)) {
+                    return jsonPrefix;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * 格式化未知错误，避免日志和修复提示词丢失关键信息
      * @param error 未知错误
      * @returns 可读错误字符串
@@ -566,6 +606,35 @@ export class TextGeneratorService extends Disposable {
                         try {
                             validatedResultStr = this._validateJsonResult(rawOutput);
                         } catch (parseError) {
+                            const jsonPrefix = this._tryExtractJsonArrayPrefixBeforeProviderRejection(rawOutput);
+
+                            if (jsonPrefix !== null) {
+                                const savedFilePath = await this._saveJsonFailureRecord({
+                                    logDirectory: config.logger.logDirectory,
+                                    modelName,
+                                    stage: "raw_json_with_provider_rejection_suffix",
+                                    parseError,
+                                    rawOutput,
+                                    selectedFallbackAction: "accept_json_prefix",
+                                    diagnosticContext
+                                });
+
+                                this.LOGGER.warning(
+                                    `${this._formatJsonFailureLog({
+                                        modelName,
+                                        stage: "raw_json_with_provider_rejection_suffix",
+                                        parseError,
+                                        rawOutput,
+                                        selectedFallbackAction: "accept_json_prefix",
+                                        savedFilePath
+                                    })}，已截断上游拒绝文本尾部并使用合法 JSON 前缀`
+                                );
+                                validatedResultStr = jsonPrefix;
+                                resultStr = validatedResultStr;
+                                selectedModelName = modelName;
+                                break;
+                            }
+
                             if (!this._looksLikeJsonPayload(rawOutput)) {
                                 const savedFilePath = await this._saveJsonFailureRecord({
                                     logDirectory: config.logger.logDirectory,

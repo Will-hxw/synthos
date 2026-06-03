@@ -431,6 +431,41 @@ describe("TextGeneratorService", () => {
         expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("完整失败样本：保存失败"));
     });
 
+    it("合法 JSON 数组后追加上游拒绝文本时应安全截断尾部", async () => {
+        const jsonPrefix = '[{"topic":"ok","contributors":[],"detail":"内容"}]';
+        const rawOutput = `${jsonPrefix}The request was rejected because it was considered high risk`;
+        const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
+
+        doGenerateTextStream.mockResolvedValueOnce(rawOutput);
+
+        const result = await service.generateTextWithModelCandidates(["mock-model"], "生成 JSON", true, {
+            groupId: "group-1",
+            sessionId: "session-1"
+        });
+        const records = await readJsonFailureRecords();
+
+        expect(result).toEqual({
+            selectedModelName: "mock-model",
+            content: jsonPrefix
+        });
+        expect(doGenerateTextStream).toHaveBeenCalledTimes(1);
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+            modelName: "mock-model",
+            stage: "raw_json_with_provider_rejection_suffix",
+            rawOutput,
+            rawOutputLength: rawOutput.length,
+            repairedOutput: "",
+            repairedOutputLength: 0,
+            selectedFallbackAction: "accept_json_prefix",
+            groupId: "group-1",
+            sessionId: "session-1"
+        });
+        expect(mockLogger.warning).toHaveBeenCalledWith(
+            expect.stringContaining("已截断上游拒绝文本尾部并使用合法 JSON 前缀")
+        );
+    });
+
     it("网关风控拒绝(high risk)应跳过 JSON 修复并直接换下一个模型", async () => {
         const doGenerateTextStream = vi.spyOn(service as any, "doGenerateTextStream") as any;
 
