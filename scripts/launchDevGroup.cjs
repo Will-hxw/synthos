@@ -80,18 +80,33 @@ function buildConcurrentlyArgs(group) {
         };
     }
 
+    if (group === "public-preview") {
+        return {
+            names: "orchestrator,preprocessing,ai-model,data-provider,backend,frontend-preview,public-tunnel",
+            commands: [
+                "pnpm --filter orchestrator dev",
+                "pnpm --filter preprocessing dev",
+                "pnpm --filter ai-model dev",
+                "pnpm --filter data-provider dev",
+                "pnpm --filter webui-backend dev",
+                "pnpm --filter vite-template build && pnpm --filter vite-template preview:public",
+                "node scripts/runWithEnv.cjs SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT=3012 -- node scripts/startPublicTunnel.cjs"
+            ]
+        };
+    }
+
     throw new Error(`未知 group: ${group}`);
 }
 
 function shouldCheckMongoReady(group) {
-    return group === "all" || group === "backend" || group === "webui" || group === "forwarder";
+    return group === "all" || group === "backend" || group === "webui" || group === "forwarder" || group === "public-preview";
 }
 
 async function main() {
     const args = parseArgs(process.argv);
     const group = args.group;
     if (!group) {
-        console.error("用法: node scripts/launchDevGroup.cjs --group <all|backend|webui|forwarder|config>");
+        console.error("用法: node scripts/launchDevGroup.cjs --group <all|backend|webui|forwarder|public-preview|config>");
         process.exit(1);
     }
 

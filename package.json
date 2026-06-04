@@ -15,6 +15,7 @@
     "dev:config": "node scripts/launchDevGroup.cjs --group config",
     "dev:webui": "node scripts/launchDevGroup.cjs --group webui",
     "dev:forwarder": "node scripts/launchDevGroup.cjs --group forwarder",
+    "dev:public-preview": "node scripts/launchDevGroup.cjs --group public-preview",
     "test": "vitest",
     "linecount": "node scripts/countLines.mjs",
     "prepare": "husky"
