@@ -105,10 +105,7 @@ ngrokProcess.stdout.on("data", chunk => {
             continue;
         }
 
-        const message = String(parsed.msg || "");
-        const isFailureLog = parsed.lvl === "crit" || message.includes("failed") || message.includes("terminating");
-
-        if (isFailureLog && parsed.err) {
+        if (parsed.lvl === "crit" && parsed.err) {
             log(`ngrok 错误: ${parsed.err}`);
         }
     }
