@@ -81,12 +81,8 @@ export default defineConfig({
                         return `vendor-heroui-${packageName}`;
                     }
 
-                    if (normalizedId.includes("/node_modules/@react-aria/")) {
-                        return "vendor-react-aria";
-                    }
-
-                    if (normalizedId.includes("/node_modules/@react-stately/")) {
-                        return "vendor-react-stately";
+                    if (normalizedId.includes("/node_modules/@react-aria/") || normalizedId.includes("/node_modules/@react-stately/")) {
+                        return "vendor-react-aria-stately";
                     }
 
                     if (normalizedId.includes("react") || normalizedId.includes("react-dom") || normalizedId.includes("react-router-dom")) {
