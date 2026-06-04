@@ -8,7 +8,8 @@
     "dev:mock": "vite --mode mock",
     "build": "tsc && vite build",
     "lint": "eslint --fix",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "preview:public": "vite preview --host 127.0.0.1 --port 3012"
   },
   "dependencies": {
     "@heroui/accordion": "^2.0.0",

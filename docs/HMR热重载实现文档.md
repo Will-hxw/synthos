@@ -92,6 +92,7 @@ pnpm add -Dw chokidar concurrently
 - `pnpm dev:all`：启动后端 + 前端
 - `pnpm dev:config`：启动配置面板相关
 - `pnpm dev:forwarder`：启动带 forwarder 的组合
+- `pnpm dev:public-preview`：启动完整服务，构建前端后通过静态预览服务创建公网 ngrok 地址
 
 ### 4) 启动前命令（可选）
 
