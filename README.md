@@ -181,6 +181,8 @@ pnpm dev:forwarder
 - WebUI 后端健康检查：`http://localhost:3002/health`
 - AI RPC 服务：`http://localhost:7979`
 
+公网转发目标端口统一通过 `SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT` 覆盖。`pnpm dev:public-preview` 会自动把隧道目标设置为静态预览端口 `3012`；`pnpm dev:forwarder` 默认仍转发开发服务器端口 `3011`，调试其他前端目标时可使用同一变量覆盖。
+
 ---
 
 **可用的启动脚本：**

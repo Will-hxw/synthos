@@ -5,6 +5,8 @@ import ngrok from "ngrok";
 import { Disposable } from "@root/common/util/lifecycle/Disposable";
 import { mustInitBeforeUse } from "@root/common/util/lifecycle/mustInitBeforeUse";
 
+const DEFAULT_PUBLIC_TUNNEL_TARGET_PORT = 3011;
+
 @mustInitBeforeUse
 export class NgrokClient extends Disposable {
     private urlForFE = "";
@@ -22,10 +24,12 @@ export class NgrokClient extends Disposable {
 
         this.LOGGER.info(`Ngrok客户端（前端）正在初始化...`);
         try {
+            const frontendTargetAddr = this._resolveFrontendTargetAddr();
+
             this.urlForFE = await ngrok.connect({
                 authtoken: config.webUI_Forwarder.authTokenForFE,
                 proto: "http",
-                addr: 3011 // TODO : Make this configurable
+                addr: frontendTargetAddr
             });
             this.LOGGER.success(`Ngrok客户端（前端）初始化成功, urlForFE: ${this.urlForFE}`);
         } catch (e) {
@@ -48,5 +52,38 @@ export class NgrokClient extends Disposable {
             await ngrok.disconnect(); // 断开所有连接
             this.LOGGER.success("Ngrok客户端已关闭");
         });
+    }
+
+    /**
+     * 复用 public tunnel 脚本的前端目标地址约定，默认保持 legacy dev:forwarder 的 3011 端口。
+     */
+    private _resolveFrontendTargetAddr(): string | number {
+        const targetPort = this._resolveFrontendTargetPort();
+        const targetHost = process.env.SYNTHOS_PUBLIC_TUNNEL_TARGET_HOST;
+
+        if (!targetHost || targetHost.trim() === "") {
+            return targetPort;
+        }
+
+        return `${targetHost.trim()}:${targetPort}`;
+    }
+
+    /**
+     * 解析 SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT，和 scripts/startPublicTunnel.cjs 使用同一变量名。
+     */
+    private _resolveFrontendTargetPort(): number {
+        const rawPort = process.env.SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT;
+
+        if (!rawPort || rawPort.trim() === "") {
+            return DEFAULT_PUBLIC_TUNNEL_TARGET_PORT;
+        }
+
+        const targetPort = Number(rawPort);
+
+        if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
+            throw new Error(`SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT 必须是 1 到 65535 之间的整数，当前值: ${rawPort}`);
+        }
+
+        return targetPort;
     }
 }
