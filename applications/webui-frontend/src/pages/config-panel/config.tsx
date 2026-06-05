@@ -531,7 +531,7 @@ export default function ConfigPage() {
             );
 
             return (
-                <Card key={section.key} className="p-4" id={`section-${section.key}`}>
+                <Card key={section.key} className="scroll-mt-36 p-3 sm:p-4 lg:scroll-mt-24" id={`section-${section.key}`}>
                     <CardHeader>
                         <h3 className="text-lg font-bold">
                             <span className="mr-2">{section.icon}</span>
@@ -566,24 +566,24 @@ export default function ConfigPage() {
 
     return (
         <DefaultLayout>
-            <section className="flex flex-col gap-4 py-8 md:py-10">
+            <section className="flex flex-col gap-4 px-3 py-6 sm:px-0 md:py-10">
                 <div className="flex flex-col items-center justify-center gap-4">
                     <h1 className={title()}>配置面板</h1>
                     <p className="text-default-600 max-w-2xl text-center">可视化编辑系统配置，所有更改将保存到 override 配置文件</p>
                 </div>
 
                 {/* 操作栏 */}
-                <div className="flex justify-center gap-4 mt-4">
-                    <Button color="primary" isDisabled={errors.length > 0} isLoading={isSaving} startContent={!isSaving && <Save className="w-4 h-4" />} onPress={handleSave}>
+                <div className="grid grid-cols-2 gap-2 mt-4 sm:flex sm:flex-wrap sm:justify-center sm:gap-3">
+                    <Button className="w-full sm:w-auto" color="primary" isDisabled={errors.length > 0} isLoading={isSaving} startContent={!isSaving && <Save className="w-4 h-4" />} onPress={handleSave}>
                         保存配置
                     </Button>
-                    <Button startContent={<RotateCcw className="w-4 h-4" />} variant="flat" onPress={handleReset}>
+                    <Button className="w-full sm:w-auto" startContent={<RotateCcw className="w-4 h-4" />} variant="flat" onPress={handleReset}>
                         重置
                     </Button>
-                    <Button startContent={<ChevronDown className="w-4 h-4" />} variant="flat" onPress={handleExpandAll}>
+                    <Button className="w-full sm:w-auto" startContent={<ChevronDown className="w-4 h-4" />} variant="flat" onPress={handleExpandAll}>
                         全部展开
                     </Button>
-                    <Button startContent={<ChevronUp className="w-4 h-4" />} variant="flat" onPress={handleCollapseAll}>
+                    <Button className="w-full sm:w-auto" startContent={<ChevronUp className="w-4 h-4" />} variant="flat" onPress={handleCollapseAll}>
                         全部折叠
                     </Button>
                     {errors.length > 0 && (
@@ -594,12 +594,12 @@ export default function ConfigPage() {
                 </div>
 
                 {/* 主内容区 */}
-                <div className="flex gap-6 mt-6">
+                <div className="flex flex-col gap-4 mt-6 lg:flex-row lg:gap-6">
                     {/* 侧边栏导航 */}
                     <ConfigSidebar activeSection={activeSection} searchQuery={searchQuery} sections={filteredSections} onSearchQueryChange={handleSearchQueryChange} onSectionClick={scrollToSection} />
 
                     {/* 配置表单 */}
-                    <div className="flex-1 space-y-6">{renderSections}</div>
+                    <div className="min-w-0 flex-1 space-y-4 lg:space-y-6">{renderSections}</div>
                 </div>
             </section>
 
