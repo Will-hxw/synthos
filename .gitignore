@@ -22,7 +22,7 @@ pnpm-debug.log*
 *.sw?
 
 # TypeScript build info
-*.tsbuildinfo 
+*.tsbuildinfo
 
 # Local runtime config and data
 synthos_config.json
@@ -40,3 +40,5 @@ logs/
 .claude/
 pids.json
 .dev-runner-locks/
+.codex-run-logs/
+.playwright-mcp/
