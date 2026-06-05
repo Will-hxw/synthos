@@ -51,6 +51,10 @@ interface AIDigestSessionRow {
     processingStartedAt: number | null;
 }
 
+interface LatestTopicFastPathRow extends LatestTopicRecord {
+    total: number;
+}
+
 /**
  * AI 生成内容数据库访问服务
  * 负责 AI 摘要结果的存储和查询
@@ -62,6 +66,7 @@ export class AgcDbAccessService extends Disposable {
     private db: CommonDBService | null = null;
     /** 写操作互斥链：串行化所有写事务，避免多并发回调在同一连接上事务交错 */
     private writeChain: Promise<unknown> = Promise.resolve();
+    private latestTopicMetadataFastPathReady = false;
 
     public async getLatestTopicRecordsPageByTimeRange(
         query: LatestTopicPageQuery
@@ -75,6 +80,12 @@ export class AgcDbAccessService extends Disposable {
             };
         }
 
+        const searchText = query.searchText?.trim().toLowerCase();
+
+        if (this._canUseLatestTopicMetadataFastPath(query, searchText)) {
+            return this._getLatestTopicRecordsPageBySessionMetadata(query);
+        }
+
         const params: Array<number | string> = [query.timeStart, query.timeEnd];
         let groupFilterSql = "";
 
@@ -84,7 +95,6 @@ export class AgcDbAccessService extends Disposable {
         }
 
         const filters: string[] = [];
-        const searchText = query.searchText?.trim().toLowerCase();
 
         if (searchText) {
             const likePattern = `%${this._escapeLikePattern(searchText)}%`;
@@ -169,6 +179,105 @@ export class AgcDbAccessService extends Disposable {
         return {
             records,
             total: countResult?.total ?? 0
+        };
+    }
+
+    private _canUseLatestTopicMetadataFastPath(
+        query: LatestTopicPageQuery,
+        searchText: string | undefined
+    ): boolean {
+        return this.latestTopicMetadataFastPathReady && !query.groupId && !searchText;
+    }
+
+    private async _getLatestTopicRecordsPageBySessionMetadata(
+        query: LatestTopicPageQuery
+    ): Promise<LatestTopicPageResult> {
+        const params: Array<number | string> = [query.timeStart, query.timeEnd];
+        const filters: string[] = [];
+        const excludeTopicIds = this._uniqueStrings(query.excludeTopicIds);
+        const includeTopicIds = this._uniqueStrings(query.includeTopicIds);
+
+        if (excludeTopicIds.length > 0) {
+            filters.push(`ar.topicId NOT IN (${excludeTopicIds.map(() => "?").join(", ")})`);
+            params.push(...excludeTopicIds);
+        }
+
+        if (includeTopicIds.length > 0) {
+            filters.push(`ar.topicId IN (${includeTopicIds.map(() => "?").join(", ")})`);
+            params.push(...includeTopicIds);
+        }
+
+        const filterSql = filters.length > 0 ? `AND ${filters.join(" AND ")}` : "";
+        const cteSql = `WITH topic_records AS (
+                SELECT
+                    ar.topicId AS topicId,
+                    COALESCE(ar.sessionId, '') AS sessionId,
+                    COALESCE(ar.topic, '') AS topic,
+                    COALESCE(ar.contributors, '') AS contributors,
+                    COALESCE(ar.detail, '') AS detail,
+                    COALESCE(ar.modelName, '') AS modelName,
+                    COALESCE(ar.updateTime, 0) AS updateTime,
+                    s.timeStart AS timeStart,
+                    s.timeEnd AS timeEnd,
+                    COALESCE((
+                        SELECT cm.groupId
+                        FROM chat_messages cm
+                        WHERE cm.sessionId = s.sessionId
+                          AND cm.groupId IS NOT NULL
+                          AND cm.groupId <> ''
+                        ORDER BY cm.timestamp ASC
+                        LIMIT 1
+                    ), '') AS groupId,
+                    isr.scoreV1 AS interestScore
+                FROM ai_digest_sessions s
+                INNER JOIN ai_digest_results ar ON ar.sessionId = s.sessionId
+                LEFT JOIN interset_score_results isr ON isr.topicId = ar.topicId
+                WHERE s.timeEnd >= ?
+                  AND s.timeStart <= ?
+                  AND s.timeStart IS NOT NULL
+                  AND s.timeEnd IS NOT NULL
+                  AND ar.sessionId IS NOT NULL
+                  AND ar.sessionId <> ''
+                  ${filterSql}
+            )`;
+        const offset = (query.page - 1) * query.pageSize;
+        const orderBySql = query.sortByInterest
+            ? "CASE WHEN interestScore IS NULL THEN 1 ELSE 0 END ASC, interestScore DESC, timeEnd DESC, updateTime DESC, topicId ASC"
+            : "timeEnd DESC, topicId ASC";
+        const rows = await this.db.all<LatestTopicFastPathRow>(
+            `${cteSql}
+            SELECT *, COUNT(*) OVER() AS total FROM topic_records
+            ORDER BY ${orderBySql}
+            LIMIT ? OFFSET ?`,
+            [...params, query.pageSize, offset]
+        );
+        let total = rows[0]?.total ?? 0;
+
+        if (rows.length === 0 && query.page > 1) {
+            const countResult = await this.db.get<{ total: number }>(
+                `${cteSql}
+                SELECT COUNT(*) AS total FROM topic_records`,
+                params
+            );
+
+            total = countResult?.total ?? 0;
+        }
+
+        return {
+            records: rows.map(row => ({
+                topicId: row.topicId,
+                sessionId: row.sessionId,
+                topic: row.topic,
+                contributors: row.contributors,
+                detail: row.detail,
+                modelName: row.modelName,
+                updateTime: row.updateTime,
+                timeStart: row.timeStart,
+                timeEnd: row.timeEnd,
+                groupId: row.groupId,
+                interestScore: row.interestScore
+            })),
+            total
         };
     }
 
@@ -397,15 +506,19 @@ export class AgcDbAccessService extends Disposable {
 
                 deletedTopicIds = this._uniqueStrings([...oldTopicIds, ...duplicateTopicIds]);
                 const topicCount = await this._getSessionTopicCount(sessionId);
+                const metadata = await this._getSessionMessageMetadata(sessionId);
 
                 await this._upsertSessionStatus(
                     sessionId,
                     AIDIGEST_SESSION_STATUSES.success,
                     topicCount,
-                    undefined,
+                    metadata,
                     null,
                     null
                 );
+                if (!metadata && results.length > 0) {
+                    this.latestTopicMetadataFastPathReady = false;
+                }
                 await this._refreshSuccessSessionTopicCounts();
 
                 await this.db.run("COMMIT");
@@ -748,6 +861,112 @@ export class AgcDbAccessService extends Disposable {
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status_updateTime ON ai_digest_sessions(status, updateTime)`
         );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_timeEnd_sessionId ON ai_digest_sessions(timeEnd, sessionId)`
+        );
+        await this._prepareLatestTopicMetadataFastPath();
+    }
+
+    private async _prepareLatestTopicMetadataFastPath(): Promise<void> {
+        let incompleteCount = await this._countIncompleteLatestTopicMetadata();
+
+        if (incompleteCount > 0) {
+            await this._backfillAIDigestSessionMetadata();
+            incompleteCount = await this._countIncompleteLatestTopicMetadata();
+        }
+
+        this.latestTopicMetadataFastPathReady = incompleteCount === 0;
+    }
+
+    private async _backfillAIDigestSessionMetadata(): Promise<void> {
+        await this.db.run(
+            `INSERT INTO ai_digest_sessions (
+                sessionId,
+                status,
+                topicCount,
+                updateTime,
+                processingStartedAt,
+                failReason,
+                messageCount,
+                timeStart,
+                timeEnd
+            )
+            SELECT
+                ar.sessionId AS sessionId,
+                'success' AS status,
+                COUNT(DISTINCT ar.topicId) AS topicCount,
+                MAX(COALESCE(ar.updateTime, 0)) AS updateTime,
+                NULL AS processingStartedAt,
+                NULL AS failReason,
+                COUNT(DISTINCT cm.msgId) AS messageCount,
+                MIN(cm.timestamp) AS timeStart,
+                MAX(cm.timestamp) AS timeEnd
+            FROM ai_digest_results ar
+            INNER JOIN chat_messages cm ON cm.sessionId = ar.sessionId
+            LEFT JOIN ai_digest_sessions existing ON existing.sessionId = ar.sessionId
+            WHERE ar.sessionId IS NOT NULL
+              AND ar.sessionId <> ''
+              AND existing.sessionId IS NULL
+            GROUP BY ar.sessionId
+            HAVING timeStart IS NOT NULL
+               AND timeEnd IS NOT NULL`
+        );
+        await this.db.run(
+            `UPDATE ai_digest_sessions
+            SET
+                topicCount = CASE
+                    WHEN topicCount <= 0 THEN COALESCE((
+                        SELECT COUNT(*)
+                        FROM ai_digest_results ar
+                        WHERE ar.sessionId = ai_digest_sessions.sessionId
+                    ), topicCount)
+                    ELSE topicCount
+                END,
+                messageCount = COALESCE(messageCount, (
+                    SELECT COUNT(*)
+                    FROM chat_messages cm
+                    WHERE cm.sessionId = ai_digest_sessions.sessionId
+                )),
+                timeStart = COALESCE(timeStart, (
+                    SELECT MIN(cm.timestamp)
+                    FROM chat_messages cm
+                    WHERE cm.sessionId = ai_digest_sessions.sessionId
+                )),
+                timeEnd = COALESCE(timeEnd, (
+                    SELECT MAX(cm.timestamp)
+                    FROM chat_messages cm
+                    WHERE cm.sessionId = ai_digest_sessions.sessionId
+                ))
+            WHERE sessionId IN (
+                SELECT DISTINCT ar.sessionId
+                FROM ai_digest_results ar
+                WHERE ar.sessionId IS NOT NULL
+                  AND ar.sessionId <> ''
+            )
+              AND (
+                topicCount <= 0
+                OR messageCount IS NULL
+                OR timeStart IS NULL
+                OR timeEnd IS NULL
+              )`
+        );
+    }
+
+    private async _countIncompleteLatestTopicMetadata(): Promise<number> {
+        const result = await this.db.get<{ incompleteCount: number }>(
+            `SELECT COUNT(*) AS incompleteCount
+            FROM ai_digest_results ar
+            LEFT JOIN ai_digest_sessions s ON s.sessionId = ar.sessionId
+            WHERE ar.sessionId IS NOT NULL
+              AND ar.sessionId <> ''
+              AND (
+                s.sessionId IS NULL
+                OR s.timeStart IS NULL
+                OR s.timeEnd IS NULL
+              )`
+        );
+
+        return result?.incompleteCount ?? 0;
     }
 
     private async _upsertSessionStatus(
@@ -812,6 +1031,40 @@ export class AgcDbAccessService extends Disposable {
         );
 
         return row?.topicCount ?? 0;
+    }
+
+    private async _getSessionMessageMetadata(
+        sessionId: string
+    ): Promise<AIDigestSessionClaimMetadata | undefined> {
+        const row = await this.db.get<{
+            messageCount: number;
+            timeStart: number | null;
+            timeEnd: number | null;
+        }>(
+            `SELECT
+                COUNT(*) AS messageCount,
+                MIN(timestamp) AS timeStart,
+                MAX(timestamp) AS timeEnd
+            FROM chat_messages
+            WHERE sessionId = ?`,
+            [sessionId]
+        );
+
+        if (
+            !row ||
+            !Number.isInteger(row.messageCount) ||
+            row.messageCount <= 0 ||
+            typeof row.timeStart !== "number" ||
+            typeof row.timeEnd !== "number"
+        ) {
+            return undefined;
+        }
+
+        return {
+            messageCount: row.messageCount,
+            timeStart: row.timeStart,
+            timeEnd: row.timeEnd
+        };
     }
 
     private async _findDuplicateTopicIdsByTitle(): Promise<string[]> {

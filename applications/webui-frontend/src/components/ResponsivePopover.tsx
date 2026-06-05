@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from "react";
-import { Popover, PopoverTrigger, PopoverContent, Button } from "@heroui/react"; // 假设你用的是 Chakra UI
+import { Button } from "@heroui/button";
+import { Popover, PopoverTrigger, PopoverContent } from "@heroui/react";
 
 import setViewportScale from "@/util/setViewportScale";
 
 // 自定义 Hook：监听媒体查询
 function useMediaQuery(query: string): boolean {
-    const [matches, setMatches] = useState(false);
+    const [matches, setMatches] = useState(() => {
+        if (typeof window === "undefined") {
+            return false;
+        }
+
+        return window.matchMedia(query).matches;
+    });
 
     useEffect(() => {
         const media = window.matchMedia(query);
@@ -31,6 +38,7 @@ interface ResponsivePopoverProps {
 
 const ResponsivePopover: React.FC<ResponsivePopoverProps> = ({ buttonText, children }) => {
     const isSmallScreen = useMediaQuery("(max-width: 1023px)");
+    const [isOpen, setIsOpen] = useState(false);
 
     useEffect(() => {
         if (isSmallScreen) {
@@ -43,11 +51,11 @@ const ResponsivePopover: React.FC<ResponsivePopoverProps> = ({ buttonText, child
     }
 
     return (
-        <Popover placement="bottom">
+        <Popover isOpen={isOpen} placement="bottom" onOpenChange={setIsOpen}>
             <PopoverTrigger>
                 <Button color="primary">{buttonText}</Button>
             </PopoverTrigger>
-            <PopoverContent>{children}</PopoverContent>
+            <PopoverContent>{isOpen ? children : null}</PopoverContent>
         </Popover>
     );
 };

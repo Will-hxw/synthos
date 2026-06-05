@@ -8,7 +8,6 @@ import { Tooltip } from "@heroui/react";
 import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem } from "@heroui/dropdown";
 import { Button as HeroUIButton } from "@heroui/button";
 import { MoreVertical, Check, Copy, Star, Download } from "lucide-react";
-import domtoimage from "dom-to-image";
 
 import { generateColorFromName, generateColorFromInterestScore, parseContributors } from "./utils";
 import EnhancedDetail from "./EnhancedDetail";
@@ -112,6 +111,7 @@ const TopicCard: React.FC<TopicCardProps> = ({ topic, index, interestScore, favo
             .slice(0, 24);
 
         try {
+            const { default: domtoimage } = await import("dom-to-image");
             const dataUrl = await domtoimage.toPng(node, {
                 quality: 1.0,
                 bgcolor: "transparent"

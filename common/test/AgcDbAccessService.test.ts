@@ -29,7 +29,17 @@ describe("AgcDbAccessService", () => {
         container.reset();
         vi.clearAllMocks();
         mockCommonDBService.init.mockResolvedValue(undefined);
-        mockCommonDBService.get.mockResolvedValue({ total: 7 });
+        mockCommonDBService.get.mockImplementation(async (sql: string) => {
+            if (sql.includes("COUNT(*) AS incompleteCount")) {
+                return { incompleteCount: 1 };
+            }
+
+            if (sql.includes("COUNT(*) AS topicCount")) {
+                return { topicCount: 0 };
+            }
+
+            return { total: 7 };
+        });
         mockCommonDBService.all.mockImplementation(async (sql: string) => {
             if (sql.includes("PRAGMA table_info(ai_digest_sessions)")) {
                 return sessionColumns;
@@ -39,6 +49,53 @@ describe("AgcDbAccessService", () => {
         });
         mockCommonDBService.run.mockResolvedValue(undefined);
         container.registerInstance(COMMON_TOKENS.CommonDBService, mockCommonDBService as any);
+    });
+
+    it("初始化应创建 session 时间索引并仅在元数据缺失时回填", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+
+        const runSqlList = mockCommonDBService.run.mock.calls.map(call => call[0] as string);
+        const readinessChecks = mockCommonDBService.get.mock.calls.filter(call =>
+            String(call[0]).includes("COUNT(*) AS incompleteCount")
+        );
+
+        expect(runSqlList.some(sql => sql.includes("idx_ai_digest_sessions_timeEnd_sessionId"))).toBe(true);
+        expect(
+            runSqlList.some(
+                sql => sql.includes("INSERT INTO ai_digest_sessions") && sql.includes("INNER JOIN chat_messages")
+            )
+        ).toBe(true);
+        expect(
+            runSqlList.some(
+                sql => sql.includes("UPDATE ai_digest_sessions") && sql.includes("timeStart = COALESCE")
+            )
+        ).toBe(true);
+        expect(readinessChecks).toHaveLength(2);
+    });
+
+    it("初始化发现元数据完整时不应重复执行历史回填", async () => {
+        mockCommonDBService.get.mockImplementation(async (sql: string) => {
+            if (sql.includes("COUNT(*) AS incompleteCount")) {
+                return { incompleteCount: 0 };
+            }
+
+            return { total: 7 };
+        });
+
+        const service = new AgcDbAccessService();
+
+        await service.init();
+
+        const runSqlList = mockCommonDBService.run.mock.calls.map(call => call[0] as string);
+
+        expect(runSqlList.some(sql => sql.includes("idx_ai_digest_sessions_timeEnd_sessionId"))).toBe(true);
+        expect(
+            runSqlList.some(
+                sql => sql.includes("INSERT INTO ai_digest_sessions") && sql.includes("INNER JOIN chat_messages")
+            )
+        ).toBe(false);
     });
 
     it("最新话题分页查询应在数据库层完成过滤排序和分页", async () => {
@@ -260,6 +317,106 @@ describe("AgcDbAccessService", () => {
         const pageSql = mockCommonDBService.all.mock.calls[0][0] as string;
 
         expect(pageSql).toContain("ORDER BY timeEnd DESC, topicId ASC");
+    });
+
+    it("元数据完整且无群组和搜索时应使用 session 元数据快路径分页", async () => {
+        mockCommonDBService.get.mockImplementation(async (sql: string) => {
+            if (sql.includes("COUNT(*) AS incompleteCount")) {
+                return { incompleteCount: 0 };
+            }
+
+            return { total: 7 };
+        });
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValueOnce([
+            {
+                topicId: "topic-1",
+                sessionId: "session-1",
+                topic: "话题1",
+                contributors: "[]",
+                detail: "详情1",
+                modelName: "mock",
+                updateTime: 2,
+                timeStart: 100,
+                timeEnd: 200,
+                groupId: "group-1",
+                interestScore: null,
+                total: 42
+            }
+        ]);
+
+        const result = await service.getLatestTopicRecordsPageByTimeRange({
+            timeStart: 100,
+            timeEnd: 200,
+            page: 2,
+            pageSize: 10,
+            sortByInterest: false
+        });
+
+        const pageSql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const pageParams = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(mockCommonDBService.get).not.toHaveBeenCalled();
+        expect(pageSql).toContain("FROM ai_digest_sessions s");
+        expect(pageSql).toContain("COUNT(*) OVER() AS total");
+        expect(pageSql).toContain("s.timeEnd >= ?");
+        expect(pageSql).toContain("s.timeStart <= ?");
+        expect(pageSql).toContain("ORDER BY timeEnd DESC, topicId ASC");
+        expect(pageParams).toEqual([100, 200, 10, 10]);
+        expect(result.total).toBe(42);
+        expect(result.records).toEqual([
+            {
+                topicId: "topic-1",
+                sessionId: "session-1",
+                topic: "话题1",
+                contributors: "[]",
+                detail: "详情1",
+                modelName: "mock",
+                updateTime: 2,
+                timeStart: 100,
+                timeEnd: 200,
+                groupId: "group-1",
+                interestScore: null
+            }
+        ]);
+    });
+
+    it("session 元数据快路径空页时应补一次总数查询", async () => {
+        mockCommonDBService.get.mockImplementation(async (sql: string) => {
+            if (sql.includes("COUNT(*) AS incompleteCount")) {
+                return { incompleteCount: 0 };
+            }
+
+            return { total: 7 };
+        });
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValueOnce([]);
+        mockCommonDBService.get.mockResolvedValueOnce({ total: 42 });
+
+        const result = await service.getLatestTopicRecordsPageByTimeRange({
+            timeStart: 100,
+            timeEnd: 200,
+            page: 3,
+            pageSize: 10,
+            sortByInterest: true
+        });
+
+        const countSql = mockCommonDBService.get.mock.calls[0][0] as string;
+        const countParams = mockCommonDBService.get.mock.calls[0][1];
+
+        expect(result).toEqual({
+            records: [],
+            total: 42
+        });
+        expect(countSql).toContain("FROM ai_digest_sessions s");
+        expect(countSql).toContain("SELECT COUNT(*) AS total FROM topic_records");
+        expect(countParams).toEqual([100, 200]);
     });
 
     it("commitSessionDigest 应在单事务内替换话题并写入 success 终态", async () => {

@@ -2,18 +2,18 @@ import type { TopicItem } from "@/types/topic";
 import type { GroupDetailsRecord } from "@/types/group";
 import type { ApiResponse } from "@/types/api";
 
-import { useState, useEffect, useRef } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "@heroui/button";
 import { Card, CardBody, CardHeader } from "@heroui/card";
 import { Pagination } from "@heroui/pagination";
 import { Spinner } from "@heroui/spinner";
-import { DateRangePicker, Tooltip, Input, Checkbox, Select, SelectItem } from "@heroui/react";
+import { Tooltip } from "@heroui/tooltip";
+import { Input } from "@heroui/input";
 import { Check, Search } from "lucide-react";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 
 import TopicCard from "@/components/topic/TopicCard";
-import QQAvatar from "@/components/QQAvatar";
 import { getGroupDetails } from "@/api/basicApi";
 import { getLatestTopics } from "@/api/latestTopicsApi";
 import { markTopicAsRead, markTopicAsFavorite, removeTopicFromFavorites } from "@/api/readAndFavApi";
@@ -25,6 +25,9 @@ import ResponsivePopover from "@/components/ResponsivePopover";
 const MIN_UNIX_MS_TIMESTAMP = 0;
 const DEFAULT_TOPICS_PER_PAGE = 12;
 const DEFAULT_RECENT_DAYS = 30;
+const TOPICS_PER_PAGE_OPTIONS = [3, 6, 9, 12, 30] as const;
+
+const LatestTopicsFilterPanel = lazy(() => import("./components/LatestTopicsFilterPanel"));
 
 const getDefaultStartDate = () => today(getLocalTimeZone()).add({ days: -(DEFAULT_RECENT_DAYS - 1) });
 const getDefaultEndDate = () => today(getLocalTimeZone());
@@ -32,6 +35,117 @@ const getDefaultEndDate = () => today(getLocalTimeZone());
 const normalizeUnixMsTimestamp = (date: Date): number => Math.max(MIN_UNIX_MS_TIMESTAMP, date.getTime());
 
 const toInclusiveDateEnd = (date: CalendarDate): Date => date.add({ days: 1 }).toDate(getLocalTimeZone());
+
+const formatCalendarDateParam = (date: CalendarDate): string => `${String(date.year).padStart(4, "0")}-${String(date.month).padStart(2, "0")}-${String(date.day).padStart(2, "0")}`;
+
+const isSameCalendarDate = (left: CalendarDate, right: CalendarDate): boolean => left.year === right.year && left.month === right.month && left.day === right.day;
+
+const parsePositiveInteger = (value: string | null): number | null => {
+    if (!value) {
+        return null;
+    }
+
+    const parsed = Number(value);
+
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        return null;
+    }
+
+    return parsed;
+};
+
+const parseBooleanParam = (value: string | null, defaultValue: boolean): boolean => {
+    if (value === "true") {
+        return true;
+    }
+
+    if (value === "false") {
+        return false;
+    }
+
+    return defaultValue;
+};
+
+const parseUrlDate = (value: string | null): CalendarDate | null => {
+    if (!value) {
+        return null;
+    }
+
+    const parts = value.split("-");
+
+    if (parts.length !== 3) {
+        return null;
+    }
+
+    const [yearText, monthText, dayText] = parts;
+
+    if (yearText.length !== 4 || monthText.length < 1 || monthText.length > 2 || dayText.length < 1 || dayText.length > 2) {
+        return null;
+    }
+
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+        return null;
+    }
+
+    try {
+        return new CalendarDate(year, month, day);
+    } catch {
+        return null;
+    }
+};
+
+const isDateRangeOrdered = (start: CalendarDate, end: CalendarDate): boolean => start.toDate(getLocalTimeZone()).getTime() <= end.toDate(getLocalTimeZone()).getTime();
+
+interface LatestTopicsInitialState {
+    selectedGroupId: string;
+    filterRead: boolean;
+    filterFavorite: boolean;
+    sortByInterest: boolean;
+    searchText: string;
+    page: number;
+    topicsPerPage: number;
+    dateRange: {
+        start: CalendarDate;
+        end: CalendarDate;
+    };
+    hasPendingGroupValidation: boolean;
+    hasInvalidDateRange: boolean;
+}
+
+const getInitialStateFromUrl = (searchParams: URLSearchParams): LatestTopicsInitialState => {
+    const page = parsePositiveInteger(searchParams.get("page")) ?? 1;
+    const pageSize = parsePositiveInteger(searchParams.get("pageSize"));
+    const startDate = parseUrlDate(searchParams.get("startDate"));
+    const endDate = parseUrlDate(searchParams.get("endDate"));
+    const hasDateParams = searchParams.has("startDate") || searchParams.has("endDate");
+    const hasValidDateRange = !!startDate && !!endDate && isDateRangeOrdered(startDate, endDate);
+    const selectedGroupId = searchParams.get("groupId") || "";
+
+    return {
+        selectedGroupId,
+        filterRead: parseBooleanParam(searchParams.get("filterRead"), true),
+        filterFavorite: parseBooleanParam(searchParams.get("filterFavorite"), false),
+        sortByInterest: parseBooleanParam(searchParams.get("sortByInterest"), false),
+        searchText: searchParams.get("search") || "",
+        page,
+        topicsPerPage: pageSize && TOPICS_PER_PAGE_OPTIONS.includes(pageSize as (typeof TOPICS_PER_PAGE_OPTIONS)[number]) ? pageSize : DEFAULT_TOPICS_PER_PAGE,
+        dateRange: hasValidDateRange
+            ? {
+                  start: startDate,
+                  end: endDate
+              }
+            : {
+                  start: getDefaultStartDate(),
+                  end: getDefaultEndDate()
+              },
+        hasPendingGroupValidation: selectedGroupId.length > 0,
+        hasInvalidDateRange: hasDateParams && !hasValidDateRange
+    };
+};
 
 const getApiDataOrThrow = <T,>(response: ApiResponse<T>, action: string): T => {
     if (!response.success) {
@@ -69,35 +183,40 @@ const isAbortError = (error: unknown): boolean => {
 
 export default function LatestTopicsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
+    const initialStateRef = useRef<LatestTopicsInitialState | null>(null);
+
+    if (!initialStateRef.current) {
+        initialStateRef.current = getInitialStateFromUrl(searchParams);
+    }
+
+    const initialState = initialStateRef.current;
     const [topics, setTopics] = useState<TopicItem[]>([]);
     const [totalTopics, setTotalTopics] = useState<number>(0);
     const [loading, setLoading] = useState<boolean>(true);
-    const [page, setPage] = useState<number>(1);
-    const [topicsPerPage, setTopicsPerPage] = useState<number>(DEFAULT_TOPICS_PER_PAGE); // 将topicsPerPage改为状态
+    const [page, setPage] = useState<number>(initialState.page);
+    const [topicsPerPage, setTopicsPerPage] = useState<number>(initialState.topicsPerPage); // 将topicsPerPage改为状态
     const [readTopics, setReadTopics] = useState<Record<string, boolean>>({});
     const [favoriteTopics, setFavoriteTopics] = useState<Record<string, boolean>>({}); // 收藏状态
     const [interestScores, setInterestScores] = useState<Record<string, number>>({}); // 兴趣得分状态
 
     // 群组筛选状态
     const [groups, setGroups] = useState<GroupDetailsRecord>({});
-    const [selectedGroupId, setSelectedGroupId] = useState<string>(""); // 空字符串表示"全部群组"
+    const [selectedGroupId, setSelectedGroupId] = useState<string>(initialState.selectedGroupId); // 空字符串表示"全部群组"
 
     // 筛选状态
-    const [filterRead, setFilterRead] = useState<boolean>(true); // 过滤已读
-    const [filterFavorite, setFilterFavorite] = useState<boolean>(false); // 筛选收藏
-    const [sortByInterest, setSortByInterest] = useState<boolean>(false); // 按兴趣度排序
-    const [searchText, setSearchText] = useState<string>(""); // 全文搜索
+    const [filterRead, setFilterRead] = useState<boolean>(initialState.filterRead); // 过滤已读
+    const [filterFavorite, setFilterFavorite] = useState<boolean>(initialState.filterFavorite); // 筛选收藏
+    const [sortByInterest, setSortByInterest] = useState<boolean>(initialState.sortByInterest); // 按兴趣度排序
+    const [searchText, setSearchText] = useState<string>(initialState.searchText); // 全文搜索
 
     // 默认时间范围
-    const [dateRange, setDateRange] = useState({
-        start: getDefaultStartDate(),
-        end: getDefaultEndDate()
-    });
+    const [dateRange, setDateRange] = useState(initialState.dateRange);
 
     // 标记是否已从URL初始化
-    const [isInitializedFromUrl, setIsInitializedFromUrl] = useState<boolean>(false);
+    const [isInitializedFromUrl, setIsInitializedFromUrl] = useState<boolean>(() => !initialState.hasPendingGroupValidation);
     const requestSeqRef = useRef<number>(0);
     const latestTopicsAbortRef = useRef<AbortController | null>(null);
+    const pendingGroupValidationRef = useRef<string | null>(initialState.hasPendingGroupValidation ? initialState.selectedGroupId : null);
 
     const abortLatestTopicsRequest = () => {
         if (!latestTopicsAbortRef.current) {
@@ -108,98 +227,51 @@ export default function LatestTopicsPage() {
         latestTopicsAbortRef.current = null;
     };
 
-    // 从URL参数初始化状态
+    // 加载群组列表；只有 URL 带 groupId 时才阻塞话题查询以保留原有校验行为。
     useEffect(() => {
-        const fetchGroupsAndInitFromUrl = async () => {
+        const fetchGroups = async () => {
             try {
                 const response = await getGroupDetails();
 
                 if (response.success) {
                     setGroups(response.data);
-                    const groupIds = Object.keys(response.data);
 
-                    // 从URL获取参数
-                    const urlGroupId = searchParams.get("groupId");
-                    const urlFilterRead = searchParams.get("filterRead");
-                    const urlFilterFavorite = searchParams.get("filterFavorite");
-                    const urlSortByInterest = searchParams.get("sortByInterest");
-                    const urlSearchText = searchParams.get("search");
-                    const urlPage = searchParams.get("page");
-                    const urlPageSize = searchParams.get("pageSize");
-                    const urlStartDate = searchParams.get("startDate");
-                    const urlEndDate = searchParams.get("endDate");
+                    const pendingGroupId = pendingGroupValidationRef.current;
 
-                    // 处理群组ID
-                    if (urlGroupId) {
-                        if (groupIds.includes(urlGroupId)) {
-                            setSelectedGroupId(urlGroupId);
+                    if (pendingGroupId) {
+                        if (Object.keys(response.data).includes(pendingGroupId)) {
+                            setSelectedGroupId(pendingGroupId);
                         } else {
-                            // URL中的groupId不存在于群组列表中，提示用户
+                            setSelectedGroupId("");
                             Notification.error({
                                 title: "群组不存在",
-                                description: `URL中指定的群组ID "${urlGroupId}" 不存在`
+                                description: `URL中指定的群组ID "${pendingGroupId}" 不存在`
                             });
                         }
-                    }
 
-                    // 处理筛选开关
-                    if (urlFilterRead !== null) {
-                        setFilterRead(urlFilterRead === "true");
-                    }
-                    if (urlFilterFavorite !== null) {
-                        setFilterFavorite(urlFilterFavorite === "true");
-                    }
-                    if (urlSortByInterest !== null) {
-                        setSortByInterest(urlSortByInterest === "true");
-                    }
-
-                    // 处理搜索文本
-                    if (urlSearchText) {
-                        setSearchText(urlSearchText);
-                    }
-
-                    // 处理页码
-                    if (urlPage) {
-                        const pageNum = parseInt(urlPage, 10);
-
-                        if (!isNaN(pageNum) && pageNum >= 1) {
-                            setPage(pageNum);
-                        }
-                    }
-
-                    if (urlPageSize) {
-                        const pageSizeNum = parseInt(urlPageSize, 10);
-
-                        if ([3, 6, 9, 12, 30].includes(pageSizeNum)) {
-                            setTopicsPerPage(pageSizeNum);
-                        }
-                    }
-
-                    // 处理时间范围
-                    if (urlStartDate && urlEndDate) {
-                        try {
-                            const startParts = urlStartDate.split("-").map(Number);
-                            const endParts = urlEndDate.split("-").map(Number);
-
-                            if (startParts.length === 3 && endParts.length === 3) {
-                                setDateRange({
-                                    start: new CalendarDate(startParts[0], startParts[1], startParts[2]),
-                                    end: new CalendarDate(endParts[0], endParts[1], endParts[2])
-                                });
-                            }
-                        } catch {
-                            // 日期解析失败，使用默认值
-                        }
+                        pendingGroupValidationRef.current = null;
+                        setIsInitializedFromUrl(true);
                     }
                 }
             } catch (error) {
                 console.error("获取群组信息失败:", error);
             } finally {
-                setIsInitializedFromUrl(true);
+                if (pendingGroupValidationRef.current) {
+                    pendingGroupValidationRef.current = null;
+                    setSelectedGroupId("");
+                    setIsInitializedFromUrl(true);
+                }
             }
         };
 
-        fetchGroupsAndInitFromUrl();
+        if (initialState.hasInvalidDateRange) {
+            Notification.error({
+                title: "日期参数无效",
+                description: "URL中的时间范围无效，已使用默认最近30天"
+            });
+        }
+
+        fetchGroups();
     }, []);
 
     // 同步筛选参数到URL
@@ -242,12 +314,12 @@ export default function LatestTopicsPage() {
         const defaultEnd = getDefaultEndDate();
 
         // 只有当时间范围不是默认值时才写入URL
-        const isStartDefault = dateRange.start.year === defaultStart.year && dateRange.start.month === defaultStart.month && dateRange.start.day === defaultStart.day;
-        const isEndDefault = dateRange.end.year === defaultEnd.year && dateRange.end.month === defaultEnd.month && dateRange.end.day === defaultEnd.day;
+        const isStartDefault = isSameCalendarDate(dateRange.start, defaultStart);
+        const isEndDefault = isSameCalendarDate(dateRange.end, defaultEnd);
 
         if (!isStartDefault || !isEndDefault) {
-            newParams.set("startDate", `${dateRange.start.year}-${String(dateRange.start.month).padStart(2, "0")}-${String(dateRange.start.day).padStart(2, "0")}`);
-            newParams.set("endDate", `${dateRange.end.year}-${String(dateRange.end.month).padStart(2, "0")}-${String(dateRange.end.day).padStart(2, "0")}`);
+            newParams.set("startDate", formatCalendarDateParam(dateRange.start));
+            newParams.set("endDate", formatCalendarDateParam(dateRange.end));
         }
 
         setSearchParams(newParams, { replace: true });
@@ -514,119 +586,52 @@ export default function LatestTopicsPage() {
 
                         {/* 顶栏右侧 */}
                         <ResponsivePopover buttonText="筛选...">
-                            <div className="flex flex-col lg:flex-row lg:items-center gap-4 p-3 lg:p-0">
-                                {/* 群组选择器 */}
-                                <Select
-                                    className="w-full lg:w-60"
-                                    isClearable={true}
-                                    label="群组"
-                                    placeholder="全部群组"
-                                    selectedKeys={selectedGroupId ? [selectedGroupId] : []}
-                                    size="sm"
-                                    onSelectionChange={keys => {
-                                        if (keys === "all" || (keys instanceof Set && keys.size === 0)) {
-                                            setSelectedGroupId("");
-                                        } else {
-                                            const selectedKey = Array.from(keys)[0] as string;
-
-                                            setSelectedGroupId(selectedKey || "");
-                                        }
+                            <Suspense
+                                fallback={
+                                    <div className="flex min-h-10 items-center justify-center px-4">
+                                        <Spinner size="sm" />
+                                    </div>
+                                }
+                            >
+                                <LatestTopicsFilterPanel
+                                    dateRange={dateRange}
+                                    filterFavorite={filterFavorite}
+                                    filterRead={filterRead}
+                                    getGroupSelectLabel={getGroupSelectLabel}
+                                    groups={groups}
+                                    isLoading={loading}
+                                    selectedGroupId={selectedGroupId}
+                                    sortByInterest={sortByInterest}
+                                    topicsPerPage={topicsPerPage}
+                                    onDateRangeChange={range => {
+                                        setDateRange(range);
                                         setPage(1);
                                     }}
-                                >
-                                    {Object.keys(groups).map(groupId => {
-                                        const groupLabel = getGroupSelectLabel(groupId);
-
-                                        return (
-                                            <SelectItem key={groupId} startContent={<QQAvatar qqId={groupId} type="group" />} textValue={groupLabel}>
-                                                {groupLabel}
-                                            </SelectItem>
-                                        );
-                                    })}
-                                </Select>
-
-                                {/* 筛选控件 */}
-                                <div className="flex gap-3 items-center">
-                                    <Select
-                                        className="w-27"
-                                        label="每页话题数"
-                                        selectedKeys={[String(topicsPerPage)]}
-                                        size="sm"
-                                        onSelectionChange={keys => {
-                                            const selected = Array.from(keys)[0];
-
-                                            if (selected) {
-                                                setTopicsPerPage(Number(selected));
-                                                setPage(1);
-                                            }
-                                        }}
-                                    >
-                                        <SelectItem key="3">3</SelectItem>
-                                        <SelectItem key="6">6</SelectItem>
-                                        <SelectItem key="9">9</SelectItem>
-                                        <SelectItem key="12">12</SelectItem>
-                                        <SelectItem key="30">30</SelectItem>
-                                    </Select>
-                                </div>
-
-                                <Checkbox
-                                    className="w-110"
-                                    isSelected={filterRead}
-                                    onValueChange={value => {
-                                        setFilterRead(value);
-                                        setPage(1);
-                                    }}
-                                >
-                                    只看未读
-                                </Checkbox>
-
-                                <Checkbox
-                                    className="w-110"
-                                    isSelected={filterFavorite}
-                                    onValueChange={value => {
+                                    onFilterFavoriteChange={value => {
                                         setFilterFavorite(value);
                                         setPage(1);
                                     }}
-                                >
-                                    只看收藏
-                                </Checkbox>
-
-                                <Checkbox
-                                    className="w-150"
-                                    isSelected={sortByInterest}
-                                    onValueChange={value => {
+                                    onFilterReadChange={value => {
+                                        setFilterRead(value);
+                                        setPage(1);
+                                    }}
+                                    onRefresh={() => {
+                                        fetchLatestTopics();
+                                    }}
+                                    onSelectedGroupIdChange={value => {
+                                        setSelectedGroupId(value);
+                                        setPage(1);
+                                    }}
+                                    onSortByInterestChange={value => {
                                         setSortByInterest(value);
                                         setPage(1);
                                     }}
-                                >
-                                    按兴趣度排序
-                                </Checkbox>
-
-                                {/* 日期选择器 + 刷新按钮 */}
-                                <DateRangePicker
-                                    className="w-full lg:w-70"
-                                    label="时间范围"
-                                    value={dateRange}
-                                    onChange={range => {
-                                        if (range) {
-                                            setDateRange({
-                                                start: range.start,
-                                                end: range.end
-                                            });
-                                            setPage(1);
-                                        }
+                                    onTopicsPerPageChange={value => {
+                                        setTopicsPerPage(value);
+                                        setPage(1);
                                     }}
                                 />
-                                <Button
-                                    color="primary"
-                                    isLoading={loading}
-                                    onPress={() => {
-                                        fetchLatestTopics();
-                                    }}
-                                >
-                                    刷新
-                                </Button>
-                            </div>
+                            </Suspense>
                         </ResponsivePopover>
                     </CardHeader>
 

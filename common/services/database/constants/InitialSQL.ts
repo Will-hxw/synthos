@@ -39,7 +39,8 @@ export const createAGCTableSQL = `
                     timeEnd INTEGER
                 );
                 CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status ON ai_digest_sessions(status);
-                CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status_updateTime ON ai_digest_sessions(status, updateTime);`;
+                CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_status_updateTime ON ai_digest_sessions(status, updateTime);
+                CREATE INDEX IF NOT EXISTS idx_ai_digest_sessions_timeEnd_sessionId ON ai_digest_sessions(timeEnd, sessionId);`;
 
 export const createInterestScoreTableSQL = `
                 CREATE TABLE IF NOT EXISTS interset_score_results (
