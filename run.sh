@@ -10,11 +10,6 @@ if ! command -v ollama &>/dev/null; then
     exit 1
 fi
 
-if ! command -v ngrok &>/dev/null; then
-    echo "[run.sh] 错误：未检测到 ngrok，请先安装并配置 ngrok。"
-    exit 1
-fi
-
 if ! curl -s http://localhost:11434 &>/dev/null; then
     echo "[run.sh] Ollama 服务未运行，正在启动..."
     ollama serve &
@@ -29,4 +24,4 @@ else
     echo "[run.sh] Ollama 服务已运行"
 fi
 
-pnpm dev:public-preview
+pnpm dev:all

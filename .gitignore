@@ -42,3 +42,4 @@ pids.json
 .dev-runner-locks/
 .codex-run-logs/
 .playwright-mcp/
+hxw.sh
