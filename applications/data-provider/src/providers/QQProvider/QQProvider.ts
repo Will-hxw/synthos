@@ -1,4 +1,6 @@
 import "reflect-metadata";
+import type { QQSourceMessageCursor, QQSourceMessagePage } from "./contracts/QQSourceMessagePage";
+
 import { injectable, inject } from "tsyringe";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { RawChatMessage } from "@root/common/contracts/data-provider/index";
@@ -19,8 +21,27 @@ import { MessagePBParser } from "./parsers/MessagePBParser";
 import { MsgElementType } from "./@types/mappers/MsgElementType";
 import { MsgElement } from "./@types/RawMsgContentParseResult";
 import { MsgType } from "./@types/mappers/MsgType";
+import {
+    buildQQEmptyContentPlaceholder,
+    buildQQParseFailurePlaceholder,
+    isRetainedQQMsgType,
+    RETAINED_QQ_MSG_TYPE_SQL_LIST
+} from "./policies/QQMessageTypePolicy";
+
+export type { QQSourceMessageCursor, QQSourceMessagePage } from "./contracts/QQSourceMessagePage";
 
 sqlite3.verbose();
+
+const QQ_SOURCE_MSG_ID_PAGE_LIMIT_MAX = 5000;
+const QQ_SOURCE_MSG_ID_SQL_CHUNK_SIZE = 500;
+
+interface QQMessageParseStats {
+    skippedExcludedMsgTypeCount: number;
+    skippedEmptyQuotedContentCount: number;
+    skippedInvalidQuotedProtobufCount: number;
+    parseFailurePlaceholderCount: number;
+    emptyContentPlaceholderCount: number;
+}
 
 /**
  * QQ 消息提供者
@@ -32,6 +53,126 @@ export class QQProvider extends Disposable implements IIMProvider {
     private db: PromisifiedSQLite | null = null;
     private LOGGER = Logger.withTag("QQProvider");
     private messagePBParser = this._registerDisposable(new MessagePBParser());
+
+    public async getBusinessMsgIdPageAfterCursor(
+        groupId: string,
+        cursor: QQSourceMessageCursor | null,
+        limit: number
+    ): Promise<QQSourceMessagePage> {
+        if (!this.db) {
+            throw ErrorReasons.UNINITIALIZED_ERROR;
+        }
+
+        const pageLimit = Math.min(Math.max(Math.floor(limit), 1), QQ_SOURCE_MSG_ID_PAGE_LIMIT_MAX);
+        const firstPage = await this._getBusinessMsgIdPage(groupId, cursor, pageLimit);
+
+        if (firstPage.messages.length > 0 || !cursor) {
+            return {
+                ...firstPage,
+                wrapped: false
+            };
+        }
+
+        const wrappedPage = await this._getBusinessMsgIdPage(groupId, null, pageLimit);
+
+        return {
+            ...wrappedPage,
+            wrapped: true
+        };
+    }
+
+    public async getMsgsByMsgIds(msgIds: string[], groupId: string = ""): Promise<RawChatMessage[]> {
+        if (!this.db) {
+            throw ErrorReasons.UNINITIALIZED_ERROR;
+        }
+        if (msgIds.length === 0) {
+            return [];
+        }
+
+        const messages: RawChatMessage[] = [];
+        const stats = this._createParseStats();
+
+        for (let i = 0; i < msgIds.length; i += QQ_SOURCE_MSG_ID_SQL_CHUNK_SIZE) {
+            const batch = msgIds.slice(i, i + QQ_SOURCE_MSG_ID_SQL_CHUNK_SIZE);
+            const placeholders = batch.map(() => "?").join(", ");
+            const params = groupId ? [...batch, groupId] : batch;
+            const sql = `
+                SELECT
+                    CAST("${GMC.msgId}" AS TEXT) AS "${GMC.msgId}",
+                    "${GMC.msgTime}",
+                    "${GMC.groupUin}",
+                    "${GMC.peeruin}",
+                    "${GMC.senderUin}",
+                    "${GMC.replyMsgSeq}",
+                    "${GMC.msgContent}",
+                    "${GMC.sendMemberName}",
+                    "${GMC.sendNickName}",
+                    "${GMC.msgType}",
+                    "${GMC.extraData}"
+                FROM group_msg_table
+                WHERE ${await this._getPatchSQL()}
+                AND CAST("${GMC.msgId}" AS TEXT) IN (${placeholders})
+                AND "${GMC.msgType}" IN (${RETAINED_QQ_MSG_TYPE_SQL_LIST})
+                ${groupId ? `AND "${GMC.peeruin}" = ?` : ""}
+                ORDER BY "${GMC.msgTime}" ASC, CAST("${GMC.msgId}" AS TEXT) ASC
+            `;
+
+            const results = await this.db.all(sql, params);
+
+            for (const result of results) {
+                const processedMsg = await this._parseRawGroupMsgRow(result, stats);
+
+                if (processedMsg) {
+                    messages.push(processedMsg);
+                }
+            }
+        }
+
+        this._logParseStats(stats);
+
+        return messages;
+    }
+
+    private async _getBusinessMsgIdPage(
+        groupId: string,
+        cursor: QQSourceMessageCursor | null,
+        limit: number
+    ): Promise<Omit<QQSourceMessagePage, "wrapped">> {
+        const cursorTime = cursor ? Math.floor(cursor.timestamp / 1000) : 0;
+        const cursorWhere = cursor
+            ? `AND ("${GMC.msgTime}" > ? OR ("${GMC.msgTime}" = ? AND CAST("${GMC.msgId}" AS TEXT) > ?))`
+            : "";
+        const params = cursor ? [groupId, cursorTime, cursorTime, cursor.msgId, limit] : [groupId, limit];
+        const sql = `
+            SELECT
+                CAST("${GMC.msgId}" AS TEXT) AS "msgId",
+                "${GMC.msgTime}" AS "msgTime"
+            FROM group_msg_table
+            WHERE ${await this._getPatchSQL()}
+            AND "${GMC.peeruin}" = ?
+            AND "${GMC.msgType}" IN (${RETAINED_QQ_MSG_TYPE_SQL_LIST})
+            ${cursorWhere}
+            ORDER BY "${GMC.msgTime}" ASC, CAST("${GMC.msgId}" AS TEXT) ASC
+            LIMIT ?
+        `;
+        const rows = (await this.db!.all(sql, params)) as Array<{ msgId: string; msgTime: number }>;
+        const messages = rows.map(row => ({
+            msgId: String(row.msgId),
+            timestamp: row.msgTime * 1000
+        }));
+        const lastMessage = messages[messages.length - 1];
+
+        return {
+            messages,
+            nextCursor: lastMessage
+                ? {
+                      msgId: lastMessage.msgId,
+                      timestamp: lastMessage.timestamp
+                  }
+                : null,
+            reachedEnd: messages.length < limit
+        };
+    }
 
     /**
      * 构造函数
@@ -97,6 +238,38 @@ export class QQProvider extends Disposable implements IIMProvider {
         const patchSQL = qqConfig.dbPatch.enabled ? `(${qqConfig.dbPatch.patchSQL})` : "1 = 1";
 
         return patchSQL;
+    }
+
+    private _createParseStats(): QQMessageParseStats {
+        return {
+            skippedExcludedMsgTypeCount: 0,
+            skippedEmptyQuotedContentCount: 0,
+            skippedInvalidQuotedProtobufCount: 0,
+            parseFailurePlaceholderCount: 0,
+            emptyContentPlaceholderCount: 0
+        };
+    }
+
+    private _logParseStats(stats: QQMessageParseStats): void {
+        if (stats.skippedExcludedMsgTypeCount > 0) {
+            this.LOGGER.debug(`排除 ${stats.skippedExcludedMsgTypeCount} 条非业务类型 QQ 原库消息。`);
+        }
+        if (stats.skippedEmptyQuotedContentCount > 0) {
+            this.LOGGER.warning(`跳过 ${stats.skippedEmptyQuotedContentCount} 条引用消息内容为空的消息引用。`);
+        }
+        if (stats.skippedInvalidQuotedProtobufCount > 0) {
+            this.LOGGER.warning(
+                `跳过 ${stats.skippedInvalidQuotedProtobufCount} 条引用消息正文解析失败的消息引用。`
+            );
+        }
+        if (stats.parseFailurePlaceholderCount > 0) {
+            this.LOGGER.warning(
+                `为 ${stats.parseFailurePlaceholderCount} 条保留类型消息正文解析失败写入占位内容。`
+            );
+        }
+        if (stats.emptyContentPlaceholderCount > 0) {
+            this.LOGGER.warning(`为 ${stats.emptyContentPlaceholderCount} 条保留类型消息正文为空写入占位内容。`);
+        }
     }
 
     private async _parseMessageContent(rawMsgElements: MsgElement[]): Promise<string> {
@@ -475,6 +648,85 @@ export class QQProvider extends Disposable implements IIMProvider {
         return `${value.slice(0, maxLength)}...`;
     }
 
+    private async _parseRawGroupMsgRow(
+        result: RawGroupMsgFromDB,
+        stats: QQMessageParseStats
+    ): Promise<RawChatMessage | null> {
+        const msgType = Number(result[GMC.msgType]);
+
+        if (!isRetainedQQMsgType(msgType)) {
+            stats.skippedExcludedMsgTypeCount++;
+
+            return null;
+        }
+
+        const processedMsg: RawChatMessage = {
+            msgId: String(result[GMC.msgId]),
+            messageContent: "",
+            groupId: String(result[GMC.groupUin] || result[GMC.peeruin]),
+            timestamp: result[GMC.msgTime] * 1000,
+            senderId: String(result[GMC.senderUin]),
+            senderGroupNickname: result[GMC.sendMemberName],
+            senderNickname: result[GMC.sendNickName]
+        };
+
+        if (msgType === MsgType.REPLY) {
+            this.LOGGER.debug("这是一条引用消息。");
+            ASSERT_NOT_FATAL(
+                !!result[GMC.replyMsgSeq],
+                "MsgType 为 REPLY 时，对应的 replyMsgSeq 应该也是有效的。"
+            );
+
+            try {
+                const extraMessage = this.messagePBParser.parseMessageSegment(result[GMC.extraData]).extraMessage;
+
+                if (!extraMessage || !extraMessage.messages) {
+                    stats.skippedEmptyQuotedContentCount++;
+                    throw ErrorReasons.EMPTY_VALUE_ERROR;
+                }
+
+                const quotedMsgContent = await this._parseMessageContent(extraMessage.messages);
+
+                if (!quotedMsgContent) {
+                    stats.skippedEmptyQuotedContentCount++;
+                    throw ErrorReasons.EMPTY_VALUE_ERROR;
+                }
+                processedMsg.quotedMsgContent = quotedMsgContent;
+            } catch (error) {
+                if (error === ErrorReasons.EMPTY_VALUE_ERROR || error === ErrorReasons.PROTOBUF_ERROR) {
+                    if (error === ErrorReasons.PROTOBUF_ERROR) {
+                        stats.skippedInvalidQuotedProtobufCount++;
+                    }
+                } else {
+                    throw error;
+                }
+            }
+        }
+
+        try {
+            const msgSegment = this.messagePBParser.parseMessageSegment(result[GMC.msgContent]);
+
+            processedMsg.messageContent = await this._parseMessageContent(msgSegment?.messages || []);
+        } catch (error) {
+            if (error === ErrorReasons.PROTOBUF_ERROR) {
+                stats.parseFailurePlaceholderCount++;
+                processedMsg.messageContent = buildQQParseFailurePlaceholder(msgType);
+            } else {
+                throw error;
+            }
+        }
+
+        if (processedMsg.messageContent === "") {
+            stats.emptyContentPlaceholderCount++;
+            processedMsg.messageContent = buildQQEmptyContentPlaceholder(msgType);
+            this.LOGGER.debug(
+                `msgId: ${result[GMC.msgId]} 的消息正文为空，已写入占位内容。发送者: ${this._getSenderDisplayName(result)}`
+            );
+        }
+
+        return processedMsg;
+    }
+
     /**
      * 从QQNT数据库中获取指定时间范围内的消息
      * @param timeStart 开始时间（毫秒级时间戳）
@@ -508,6 +760,7 @@ export class QQProvider extends Disposable implements IIMProvider {
                 FROM group_msg_table 
                 WHERE ${await this._getPatchSQL()} 
                 AND ("${GMC.msgTime}" BETWEEN ${timeStart} AND ${timeEnd})
+                AND "${GMC.msgType}" IN (${RETAINED_QQ_MSG_TYPE_SQL_LIST})
                 ${groupId ? `AND "${GMC.peeruin}" = ?` : ""}
             `;
 
@@ -518,94 +771,16 @@ export class QQProvider extends Disposable implements IIMProvider {
 
             // 解析查询到的全部消息内容
             const messages: RawChatMessage[] = [];
-            let skippedInvalidProtobufCount = 0;
-            let skippedEmptyQuotedContentCount = 0;
-            let skippedInvalidQuotedProtobufCount = 0;
+            const stats = this._createParseStats();
 
             for (const result of results) {
-                // 生成消息对象
-                const processedMsg: RawChatMessage = {
-                    msgId: String(result[GMC.msgId]),
-                    messageContent: "",
-                    groupId: String(result[GMC.groupUin] || result[GMC.peeruin]),
-                    timestamp: result[GMC.msgTime] * 1000, // 转换为毫秒级时间戳
-                    senderId: String(result[GMC.senderUin]),
-                    senderGroupNickname: result[GMC.sendMemberName],
-                    senderNickname: result[GMC.sendNickName]
-                };
+                const processedMsg = await this._parseRawGroupMsgRow(result, stats);
 
-                // 处理引用消息，首先尝试获取被引用消息的消息正文而不是id，减少一次开销极大的数据库查询，极大提升性能
-                if (result[GMC.msgType] === MsgType.REPLY) {
-                    this.LOGGER.debug(`这是一条引用消息！`);
-                    // replyMsgSeq 为 0/缺失属于异常数据，但不应终止整批摄取，仅记录后按普通消息处理
-                    ASSERT_NOT_FATAL(
-                        !!result[GMC.replyMsgSeq],
-                        "MsgType为REPLY时，对应的replyMsgSeq应该也是有效的"
-                    );
-                    try {
-                        // protobufjs toObject(defaults:true) 对缺失的 message 字段置为 null，
-                        // 当 extraData 能解码但不含 extraMessage 子消息时，直接取 .messages 会抛 TypeError，
-                        // 这里显式判空并归类为空引用内容，避免一条坏数据冒泡崩整批摄取。
-                        const extraMessage = this.messagePBParser.parseMessageSegment(
-                            result[GMC.extraData]
-                        ).extraMessage;
-
-                        if (!extraMessage || !extraMessage.messages) {
-                            skippedEmptyQuotedContentCount++;
-                            throw ErrorReasons.EMPTY_VALUE_ERROR;
-                        }
-
-                        const quotedMsgContent = await this._parseMessageContent(extraMessage.messages);
-
-                        if (!quotedMsgContent) {
-                            skippedEmptyQuotedContentCount++;
-                            throw ErrorReasons.EMPTY_VALUE_ERROR;
-                        }
-                        processedMsg.quotedMsgContent = quotedMsgContent;
-                    } catch (error) {
-                        if (error === ErrorReasons.EMPTY_VALUE_ERROR || error === ErrorReasons.PROTOBUF_ERROR) {
-                            if (error === ErrorReasons.PROTOBUF_ERROR) {
-                                skippedInvalidQuotedProtobufCount++;
-                            }
-                        } else {
-                            throw error;
-                        }
-                    }
-                }
-
-                // 获取消息正文：解析40800中的所有element（或者叫做fragment）
-                try {
-                    processedMsg.messageContent = await this._parseMessageContent(
-                        this.messagePBParser.parseMessageSegment(result[GMC.msgContent]).messages
-                    );
-                } catch (error) {
-                    if (error === ErrorReasons.PROTOBUF_ERROR) {
-                        skippedInvalidProtobufCount++;
-                        continue;
-                    }
-
-                    throw error;
-                }
-                if (processedMsg.messageContent === "" && !processedMsg.quotedMsgContent) {
-                    this.LOGGER.debug(
-                        `msgId: ${result[GMC.msgId]}的消息内容为空，忽略该消息。
-                        发送者: ${this._getSenderDisplayName(result)}`
-                    );
-                } else {
+                if (processedMsg) {
                     messages.push(processedMsg);
                 }
             }
-            if (skippedEmptyQuotedContentCount > 0) {
-                this.LOGGER.warning(`跳过 ${skippedEmptyQuotedContentCount} 条引用消息内容为空的消息引用。`);
-            }
-            if (skippedInvalidQuotedProtobufCount > 0) {
-                this.LOGGER.warning(
-                    `跳过 ${skippedInvalidQuotedProtobufCount} 条引用消息正文解析失败的消息引用。`
-                );
-            }
-            if (skippedInvalidProtobufCount > 0) {
-                this.LOGGER.warning(`跳过 ${skippedInvalidProtobufCount} 条消息正文解析失败的消息。`);
-            }
+            this._logParseStats(stats);
 
             return messages;
         } else {

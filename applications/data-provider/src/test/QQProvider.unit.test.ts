@@ -204,6 +204,7 @@ describe("QQProvider", () => {
             [GMC.senderUin]: mockSenderId,
             [GMC.replyMsgSeq]: null,
             [GMC.msgContent]: Buffer.from("mock content"),
+            [GMC.msgType]: MsgType.TEXT,
             [GMC.sendMemberName]: "测试群昵称",
             [GMC.sendNickName]: "测试昵称",
             ...overrides
@@ -253,6 +254,59 @@ describe("QQProvider", () => {
 
             expect(sqlCall).toContain("WHERE 1 = 1");
             expect(sqlCall).toContain('AND ("40050" BETWEEN');
+        });
+
+        it("应排除空白、系统提示和未知类型消息", async () => {
+            mockDbMethods.all.mockResolvedValue([
+                createMockDbRow({ [GMC.msgId]: "empty-msg", [GMC.msgType]: MsgType.EMPTY_MESSAGE }),
+                createMockDbRow({ [GMC.msgId]: "system-msg", [GMC.msgType]: MsgType.SYSTEM_NOTICE }),
+                createMockDbRow({ [GMC.msgId]: "unknown-msg", [GMC.msgType]: 17 })
+            ]);
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(0);
+            expect(mockParserMethods.parseMessageSegment).not.toHaveBeenCalled();
+        });
+
+        it("应保留已定义业务类型消息", async () => {
+            const retainedMsgTypes = [
+                MsgType.TEXT,
+                MsgType.GROUP_FILE,
+                MsgType.VOICE,
+                MsgType.VIDEO,
+                MsgType.FORWARD_MERGED,
+                MsgType.REPLY,
+                MsgType.RED_PACKET,
+                MsgType.APP_MESSAGE
+            ];
+
+            mockDbMethods.all.mockResolvedValue(
+                retainedMsgTypes.map(msgType =>
+                    createMockDbRow({
+                        [GMC.msgId]: `msg-${msgType}`,
+                        [GMC.msgType]: msgType,
+                        [GMC.replyMsgSeq]: msgType === MsgType.REPLY ? 123 : null,
+                        [GMC.extraData]: Buffer.from("mock extra")
+                    })
+                )
+            );
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.TEXT,
+                        messageText: "业务消息"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(retainedMsgTypes.length);
+            expect(result.map(message => message.msgId)).toEqual(
+                retainedMsgTypes.map(msgType => `msg-${msgType}`)
+            );
         });
 
         it("应正确处理表情消息", async () => {
@@ -423,7 +477,7 @@ describe("QQProvider", () => {
             expect(result[0].messageContent).toBe("今天天气真好[太阳]");
         });
 
-        it("应过滤空内容的消息", async () => {
+        it("保留类型正文为空时应写入稳定占位", async () => {
             const mockRow = createMockDbRow();
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
@@ -439,7 +493,8 @@ describe("QQProvider", () => {
 
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
-            expect(result).toHaveLength(0);
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[文本消息暂无可读正文]");
         });
 
         it("正文为空但引用内容有效时应保留消息", async () => {
@@ -475,11 +530,11 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].messageContent).toBe("");
+            expect(result[0].messageContent).toBe("[回复消息暂无可读正文]");
             expect(result[0].quotedMsgContent).toBe("被引用的内容");
         });
 
-        it("消息正文 protobuf 解析失败时应跳过该消息", async () => {
+        it("保留类型消息正文 protobuf 解析失败时应写入稳定占位", async () => {
             const mockRow = createMockDbRow();
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
@@ -489,11 +544,12 @@ describe("QQProvider", () => {
 
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
-            expect(result).toHaveLength(0);
-            expect(mockLogger.warning).toHaveBeenCalledWith("跳过 1 条消息正文解析失败的消息。");
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[文本消息解析失败]");
+            expect(mockLogger.warning).toHaveBeenCalledWith("为 1 条保留类型消息正文解析失败写入占位内容。");
         });
 
-        it("诊断日志中的发送者应在群名片为空时回退到昵称", async () => {
+        it("空正文占位日志中的发送者应在群名片为空时回退到昵称", async () => {
             const mockRow = createMockDbRow({
                 [GMC.sendMemberName]: "",
                 [GMC.sendNickName]: "测试昵称"
@@ -512,7 +568,8 @@ describe("QQProvider", () => {
 
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
-            expect(result).toHaveLength(0);
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[文本消息暂无可读正文]");
             expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining("发送者: 测试昵称"));
         });
 
@@ -572,6 +629,88 @@ describe("QQProvider", () => {
 
             // 验证开始时间向下取整，结束时间向上取整
             expect(sqlCall).toContain("BETWEEN 1700000000 AND 1700003601");
+        });
+
+        it("应按游标分页读取 QQ 原库业务 msgId", async () => {
+            mockDbMethods.all.mockResolvedValueOnce([
+                { msgId: "msg-a", msgTime: 1700000000 },
+                { msgId: "msg-b", msgTime: 1700000010 }
+            ]);
+
+            const result = await qqProvider.getBusinessMsgIdPageAfterCursor(
+                mockGroupId,
+                {
+                    msgId: "msg-before",
+                    timestamp: 1699999999000
+                },
+                2
+            );
+
+            const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
+            const paramsCall = mockDbMethods.all.mock.calls[0][1] as unknown[];
+
+            expect(sqlCall).toContain(`"${GMC.peeruin}" = ?`);
+            expect(sqlCall).toContain(`"${GMC.msgType}" IN`);
+            expect(paramsCall).toEqual([mockGroupId, 1699999999, 1699999999, "msg-before", 2]);
+            expect(result).toEqual({
+                messages: [
+                    { msgId: "msg-a", timestamp: 1700000000000 },
+                    { msgId: "msg-b", timestamp: 1700000010000 }
+                ],
+                nextCursor: {
+                    msgId: "msg-b",
+                    timestamp: 1700000010000
+                },
+                reachedEnd: false,
+                wrapped: false
+            });
+        });
+
+        it("游标扫到末尾时应从头回绕读取 QQ 原库业务 msgId", async () => {
+            mockDbMethods.all
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([{ msgId: "msg-first", msgTime: 1700000000 }]);
+
+            const result = await qqProvider.getBusinessMsgIdPageAfterCursor(
+                mockGroupId,
+                {
+                    msgId: "msg-tail",
+                    timestamp: 1800000000000
+                },
+                10
+            );
+
+            expect(mockDbMethods.all).toHaveBeenCalledTimes(2);
+            expect(result.wrapped).toBe(true);
+            expect(result.reachedEnd).toBe(true);
+            expect(result.messages).toEqual([{ msgId: "msg-first", timestamp: 1700000000000 }]);
+        });
+
+        it("应按 msgId 回源解析缺失消息", async () => {
+            const mockRow = createMockDbRow({ [GMC.msgId]: "missing-msg" });
+
+            mockDbMethods.all.mockResolvedValueOnce([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.TEXT,
+                        messageText: "补漏消息"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgsByMsgIds(["missing-msg"], mockGroupId);
+
+            const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
+            const paramsCall = mockDbMethods.all.mock.calls[0][1] as unknown[];
+
+            expect(sqlCall).toContain(`CAST("${GMC.msgId}" AS TEXT) IN (?)`);
+            expect(sqlCall).toContain(`"${GMC.msgType}" IN`);
+            expect(paramsCall).toEqual(["missing-msg", mockGroupId]);
+            expect(result).toHaveLength(1);
+            expect(result[0].msgId).toBe("missing-msg");
+            expect(result[0].messageContent).toBe("补漏消息");
         });
     });
 
