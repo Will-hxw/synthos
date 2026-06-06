@@ -595,7 +595,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                                 bg-gradient-to-r from-secondary-600 via-primary-600 to-warning-600
                                 bg-[length:200%_auto] animate-[gradient_3s_ease-in-out_infinite]
                                 bg-clip-text text-transparent
-                                text-3xl md:text-4xl font-bold mb-4
+                                text-3xl md:text-4xl font-bold mb-4 leading-relaxed pb-1
                             "
                             style={{
                                 backgroundSize: "200% auto",
