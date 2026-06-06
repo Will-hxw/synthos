@@ -1,4 +1,6 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+
+import { getQQAvatar } from "@/api/basicApi";
 
 /**
  * QQ头像类型
@@ -18,6 +20,8 @@ interface QQAvatarProps {
     className?: string;
     /** alt文本 */
     alt?: string;
+    /** 是否通过同源后端代理加载头像，默认启用 */
+    useProxy?: boolean;
 }
 
 /** 默认占位图（SVG格式的用户图标） */
@@ -41,12 +45,73 @@ function getAvatarUrl(type: QQAvatarType, qqId: string): string {
 }
 
 /**
+ * 获取头像 data URL 前缀
+ */
+function getAvatarDataUrlPrefix(type: QQAvatarType): string {
+    if (type === "group") {
+        return "data:image/jpeg;base64,";
+    }
+
+    return "data:image/png;base64,";
+}
+
+/**
  * QQ头像组件
  * 支持显示QQ群头像和QQ用户头像，带有错误处理和默认占位图
  */
-const QQAvatar: React.FC<QQAvatarProps> = ({ type, qqId, sizeClassName = "w-6 h-6", className = "", alt }) => {
+const QQAvatar: React.FC<QQAvatarProps> = ({ type, qqId, sizeClassName = "w-6 h-6", className = "", alt, useProxy }) => {
     // 根据类型生成默认alt文本
     const defaultAlt = type === "group" ? "群头像" : "用户头像";
+    const shouldUseProxy = useProxy !== false;
+    const [avatarSrc, setAvatarSrc] = useState<string>(shouldUseProxy ? DEFAULT_AVATAR_PLACEHOLDER : getAvatarUrl(type, qqId));
+
+    useEffect(() => {
+        let cancelled = false;
+
+        if (!qqId) {
+            setAvatarSrc(DEFAULT_AVATAR_PLACEHOLDER);
+
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        if (!shouldUseProxy) {
+            setAvatarSrc(getAvatarUrl(type, qqId));
+
+            return () => {
+                cancelled = true;
+            };
+        }
+
+        setAvatarSrc(DEFAULT_AVATAR_PLACEHOLDER);
+
+        const loadAvatar = async () => {
+            try {
+                const response = await getQQAvatar(qqId, type);
+
+                if (cancelled) {
+                    return;
+                }
+
+                if (response.success && response.data.avatarBase64) {
+                    setAvatarSrc(`${getAvatarDataUrlPrefix(type)}${response.data.avatarBase64}`);
+                } else {
+                    setAvatarSrc(DEFAULT_AVATAR_PLACEHOLDER);
+                }
+            } catch {
+                if (!cancelled) {
+                    setAvatarSrc(DEFAULT_AVATAR_PLACEHOLDER);
+                }
+            }
+        };
+
+        void loadAvatar();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [qqId, shouldUseProxy, type]);
 
     const handleError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
         const target = e.target as HTMLImageElement;
@@ -55,7 +120,7 @@ const QQAvatar: React.FC<QQAvatarProps> = ({ type, qqId, sizeClassName = "w-6 h-
         target.src = DEFAULT_AVATAR_PLACEHOLDER;
     };
 
-    return <img alt={alt || defaultAlt} className={`${sizeClassName} rounded-full ${className}`.trim()} src={getAvatarUrl(type, qqId)} onError={handleError} />;
+    return <img alt={alt || defaultAlt} className={`${sizeClassName} rounded-full ${className}`.trim()} src={avatarSrc} onError={handleError} />;
 };
 
 export default QQAvatar;

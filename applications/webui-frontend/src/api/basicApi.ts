@@ -221,8 +221,15 @@ export interface QQAvatarResponse {
     avatarBase64: string;
 }
 
-export const getQQAvatar = async (qqNumber: string): Promise<ApiResponse<QQAvatarResponse>> => {
+export type QQAvatarType = "group" | "user";
+
+export const getQQAvatar = async (qqNumber: string, type?: QQAvatarType): Promise<ApiResponse<QQAvatarResponse>> => {
     const params = new URLSearchParams({ qqNumber });
+
+    if (type) {
+        params.set("type", type);
+    }
+
     const response = await fetchWrapper(`${API_BASE_URL}/api/qq-avatar?${params}`);
 
     return response.json();

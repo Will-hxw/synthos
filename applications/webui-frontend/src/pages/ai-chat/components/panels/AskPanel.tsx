@@ -44,10 +44,10 @@ export default function AskPanel({
         }
 
         try {
-            const { default: domtoimage } = await import("dom-to-image");
-            const dataUrl = await domtoimage.toPng(answerCardRef.current, {
-                quality: 1.0,
-                bgcolor: theme === "dark" ? "#1e1e1e" : "#ffffff",
+            const { toPng } = await import("html-to-image");
+            const dataUrl = await toPng(answerCardRef.current, {
+                backgroundColor: theme === "dark" ? "#1e1e1e" : "#ffffff",
+                cacheBust: true,
                 style: {
                     padding: "20px"
                 }

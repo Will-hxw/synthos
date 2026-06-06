@@ -5,12 +5,14 @@ import https from "https";
 
 import { injectable } from "tsyringe";
 
+type QQAvatarType = "group" | "user";
+
 @injectable()
 export class MiscService {
     /**
      * 获取健康检查信息
      */
-    getHealthInfo() {
+    public getHealthInfo() {
         return {
             message: "WebUI后端服务运行正常",
             timestamp: new Date().toISOString()
@@ -20,17 +22,28 @@ export class MiscService {
     /**
      * 下载 QQ 头像并返回 base64 编码
      */
-    async getQQAvatarBase64(qqNumber: string): Promise<string> {
-        const avatarUrl = `https://q1.qlogo.cn/g?b=qq&nk=${qqNumber}&s=100`;
-        const avatarBuffer = await this.downloadImage(avatarUrl);
+    public async getQQAvatarBase64(qqNumber: string, type: QQAvatarType): Promise<string> {
+        const avatarUrl = this._getQQAvatarUrl(qqNumber, type);
+        const avatarBuffer = await this._downloadImage(avatarUrl);
 
         return avatarBuffer.toString("base64");
     }
 
     /**
+     * 获取 QQ 头像源地址
+     */
+    private _getQQAvatarUrl(qqNumber: string, type: QQAvatarType): string {
+        if (type === "group") {
+            return `https://p.qlogo.cn/gh/${qqNumber}/${qqNumber}/0`;
+        }
+
+        return `https://q1.qlogo.cn/g?b=qq&nk=${qqNumber}&s=100`;
+    }
+
+    /**
      * 下载图片
      */
-    private downloadImage(url: string): Promise<Buffer> {
+    private _downloadImage(url: string): Promise<Buffer> {
         return new Promise((resolve, reject) => {
             https
                 .get(url, res => {
