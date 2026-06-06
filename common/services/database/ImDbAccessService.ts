@@ -134,6 +134,36 @@ export class ImDbAccessService extends Disposable {
     }
 
     /**
+     * 获取已入库的原始消息 msgId 集合。
+     * @param msgIds 待对账的消息 ID 列表
+     * @returns 已存在于主库的消息 ID 集合
+     */
+    public async getExistingRawChatMessageIds(msgIds: string[]): Promise<Set<string>> {
+        const existingMsgIds = new Set<string>();
+
+        if (msgIds.length === 0) {
+            return existingMsgIds;
+        }
+
+        const MAX_SQLITE_PARAMS = 999;
+
+        for (let i = 0; i < msgIds.length; i += MAX_SQLITE_PARAMS) {
+            const batch = msgIds.slice(i, i + MAX_SQLITE_PARAMS);
+            const placeholders = batch.map(() => "?").join(", ");
+            const rows = await this.db.all<{ msgId: string }>(
+                `SELECT msgId FROM chat_messages WHERE msgId IN (${placeholders})`,
+                batch
+            );
+
+            for (const row of rows) {
+                existingMsgIds.add(row.msgId);
+            }
+        }
+
+        return existingMsgIds;
+    }
+
+    /**
      * 获取指定群组在指定时间范围内的所有消息
      * @param groupId 群组ID
      * @param timeStart 起始时间戳
