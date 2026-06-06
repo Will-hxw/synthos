@@ -34,6 +34,7 @@ applications/*/data/
 docker/volumes
 docker/data
 docker/logs
+docker/config/synthos_config.json
 docker/config/synthos_config_override.json
 
 logs/

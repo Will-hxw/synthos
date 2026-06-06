@@ -32,6 +32,8 @@ services:
       - NODE_ENV=production
       - SYNTHOS_CONFIG_PATH=/config/synthos_config.json
       - SYNTHOS_MONGODB_URL=mongodb://mongo:27017/synthos
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/config:/config:ro
       - ./docker/data:/app/data
@@ -52,6 +54,8 @@ services:
       - NODE_ENV=production
       - SYNTHOS_CONFIG_PATH=/config/synthos_config.json
       - SYNTHOS_MONGODB_URL=mongodb://mongo:27017/synthos
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/config:/config:ro
       - ./docker/data:/app/data
@@ -72,6 +76,8 @@ services:
       - NODE_ENV=production
       - SYNTHOS_CONFIG_PATH=/config/synthos_config.json
       - SYNTHOS_MONGODB_URL=mongodb://mongo:27017/synthos
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/config:/config:ro
       - ./docker/data:/app/data
@@ -92,6 +98,8 @@ services:
       - SYNTHOS_CONFIG_PATH=/config/synthos_config.json
       - SYNTHOS_MONGODB_URL=mongodb://mongo:27017/synthos
       - SYNTHOS_AI_RPC_BASE_URL=http://ai-model:7979
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./docker/config:/config:ro
       - ./docker/data:/app/data

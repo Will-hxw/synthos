@@ -263,28 +263,63 @@ bash run.sh
 
 ## 🐳 Docker 部署
 
-```bash
-# 1. 准备配置目录
-mkdir -p docker/config
-cp synthos_config.json docker/config/
+项目提供完整的 Docker Compose 编排，包含 MongoDB、后端服务、Nginx 前端，开箱即用。
 
-# 2. 按需编辑 docker/config/synthos_config.json
-#    注意：MongoDB 地址应改为 mongodb://mongo:27017/synthos
+### 前置条件
+
+- 已安装 [Docker](https://docs.docker.com/get-docker/) 和 Docker Compose
+- 宿主机已安装 [Ollama](https://ollama.com/) 并拉取 `bge-m3` 模型（或用 `--profile ollama` 使用内置 Ollama 容器）
+
+### 快速启动
+
+```bash
+# 1. 复制 Docker 专用配置模板
+cp docker/config/synthos_config.docker.example.json docker/config/synthos_config.json
+
+# 2. 编辑配置，填入 LLM API Key（其余字段已针对 Docker 环境预配置好）
+#    🔴 必改：ai.models.<name>.apiKey 和 ai.defaultModelConfig.apiKey
 
 # 3. 启动全部服务
 docker compose up -d
 
-# 4. （可选）使用内置 Ollama 容器
-docker compose --profile ollama up -d
-# 进入 Ollama 容器拉取模型：
-docker exec -it synthos-ollama ollama pull bge-m3
-
-# 5. 访问
+# 4. 访问
 #    前端：http://localhost:8080
 #    后端 API：http://localhost:3002
 ```
 
-> ⚠️ `data-provider` 无法在 Docker 中运行（依赖宿主机 QQ 桌面客户端本地数据库 + VFS 插件），请在宿主机单独启动。
+### 使用内置 Ollama（可选）
+
+如果不希望依赖宿主机 Ollama，可启用内置容器：
+
+```bash
+docker compose --profile ollama up -d
+docker exec -it synthos-ollama ollama pull bge-m3
+
+# 同时修改 docker/config/synthos_config.json：
+# "ollamaBaseURL": "http://ollama:11434"  ← 改为 Ollama 服务名
+```
+
+### 服务说明
+
+| 服务 | 容器名 | 端口 |
+|------|--------|------|
+| MongoDB | `synthos-mongo` | `27017` |
+| AI Model | `synthos-ai-model` | `7979` |
+| WebUI Backend | `synthos-webui-backend` | `3002` |
+| WebUI Frontend (Nginx) | `synthos-webui-frontend` | `8080` |
+| Ollama（需 `--profile ollama`） | `synthos-ollama` | `11434` |
+
+### 数据持久化
+
+| 宿主机目录 | 容器内路径 | 用途 |
+|-----------|-----------|------|
+| `./docker/config/` | `/config`（只读） | 配置文件 |
+| `./docker/data/` | `/app/data` | SQLite / LevelDB / 向量数据库 |
+| `./docker/logs/` | `/app/logs` | 日志文件 |
+| `./docker/volumes/mongo/` | `/data/db` | MongoDB 数据 |
+| `./docker/volumes/ollama/` | `/root/.ollama` | Ollama 模型文件 |
+
+> ⚠️ `data-provider` 无法在容器中运行（需访问宿主机 QQ 桌面客户端本地数据库 + 平台特定 VFS 插件），请在宿主机通过 `pnpm --filter data-provider dev` 单独启动，并设置 `SYNTHOS_MONGODB_URL=mongodb://localhost:27017/synthos`。
 
 ---
 
