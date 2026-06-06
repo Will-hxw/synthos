@@ -144,9 +144,7 @@ QQ 数据库密钥配置方法详见：[https://docs.aaqwq.top/](https://docs.aa
 
 ### 2. 启动项目
 
-#### 方式一：使用新的 HMR 开发模式（推荐）
-
-所有后端子项目现已支持热重载（HMR）功能
+#### 方式一：使用开发模式（推荐）
 
 `pnpm dev:all`、`pnpm dev:backend`、`pnpm dev:webui`、`pnpm dev:forwarder` 和 `pnpm dev:public-preview` 启动前会只读检查 MongoDB TCP 可达性，地址读取顺序为 `SYNTHOS_MONGODB_URL` → `MONGODB_URL` → `mongodb://localhost:27017/synthos`。`pnpm dev:config` 是配置面板轻量模式，不强制检查 MongoDB。
 
@@ -168,7 +166,7 @@ pnpm dev:backend
 # 或者，仅启动配置面板（轻量级模式）
 pnpm dev:config
 
-# 或者，启动完整服务 + 公网静态预览转发（推荐用于公网访问）
+# 或者，启动完整服务 + 公网静态预览转发（需配置内网穿透）
 pnpm dev:public-preview
 
 # 或者，启动完整服务 + 开发服务器公网转发（仅用于调试 forwarder）
@@ -182,9 +180,6 @@ pnpm dev:forwarder
 - AI RPC 服务：`http://localhost:7979`
 
 公网转发目标端口统一通过 `SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT` 覆盖。`pnpm dev:public-preview` 会自动把隧道目标设置为静态预览端口 `3012`；`pnpm dev:forwarder` 默认仍转发开发服务器端口 `3011`，调试其他前端目标时可使用同一变量覆盖。
-
-如果本机 ngrok inspector 已存在指向同一目标主机和端口的隧道，public tunnel 脚本会复用该公网地址，避免重复启动同一 endpoint 时触发 `ERR_NGROK_334`。
-
 ---
 
 **可用的启动脚本：**
