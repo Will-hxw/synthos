@@ -1,0 +1,143 @@
+{
+    "dataProviders": {
+        "QQ": {
+            "VFSExtPath": "./assets/sqlite_vfs_plugins/win_x86/sqlite_ext_ntqq_db.dll",
+            "dbBasePath": "C:/Users/<用户名>/Documents/Tencent Files/<QQ号>/nt_qq/nt_db",
+            "dbKey": "<数据库密钥>",
+            "dbPatch": {
+                "enabled": false,
+                "patchSQL": ""
+            }
+        }
+    },
+    "preprocessors": {
+        "AccumulativeSplitter": {
+            "mode": "charCount",
+            "maxCharCount": 2000,
+            "maxMessageCount": 50,
+            "persistentKVStorePath": "./data/splitter-kv"
+        },
+        "TimeoutSplitter": {
+            "timeoutInMinutes": 30
+        }
+    },
+    "ai": {
+        "models": {
+            "example-model": {
+                "apiKey": "replace-with-llm-api-key",
+                "baseURL": "https://api.openai.com/v1",
+                "temperature": 0.7,
+                "maxTokens": 100000
+            }
+        },
+        "defaultModelConfig": {
+            "apiKey": "replace-with-llm-api-key",
+            "baseURL": "https://api.openai.com/v1",
+            "temperature": 0.7,
+            "maxTokens": 100000
+        },
+        "defaultModelName": "example-model",
+        "pinnedModels": ["example-model"],
+        "maxConcurrentRequests": 10,
+        "context": {
+            "backgroundKnowledge": {
+                "enabled": false,
+                "maxKnowledgeEntries": 3,
+                "knowledgeBase": []
+            }
+        },
+        "interestScore": {
+            "UserInterestsPositiveKeywords": [
+                "AI Agent", "RAG", "LLM", "技术讨论"
+            ],
+            "UserInterestsNegativeKeywords": [
+                "广告", "灌水"
+            ],
+            "llmEvaluationDescriptions": [
+                "用户关注 AI、LLM、RAG 等技术话题。"
+            ],
+            "llmEvaluationBatchSize": 10
+        },
+        "embedding": {
+            "_comment": "默认连接宿主机 Ollama；如果使用 docker compose --profile ollama，请改为 http://ollama:11434",
+            "ollamaBaseURL": "http://host.docker.internal:11434",
+            "model": "bge-m3",
+            "batchSize": 10,
+            "vectorDBPath": "./data/vectors.db",
+            "dimension": 1024
+        },
+        "rpc": {
+            "port": 7979
+        }
+    },
+    "webUI_Backend": {
+        "port": 3002,
+        "kvStoreBasePath": "./data/kv-store",
+        "dbBasePath": "./data"
+    },
+    "orchestrator": {
+        "pipelineIntervalInMinutes": 60,
+        "dataSeekTimeWindowInHours": 24
+    },
+    "webUI_Forwarder": {
+        "enabled": false,
+        "authTokenForFE": "",
+        "authTokenForBE": ""
+    },
+    "commonDatabase": {
+        "dbBasePath": "./data",
+        "maxDBDuration": 90,
+        "ftsDatabase": {
+            "imMessageDBPath": "./data/fts_messages.db"
+        }
+    },
+    "logger": {
+        "logLevel": "info",
+        "logDirectory": "./logs"
+    },
+    "groupConfigs": {
+        "example-group": {
+            "IM": "QQ",
+            "groupName": "示例群",
+            "splitStrategy": "accumulative",
+            "groupIntroduction": "",
+            "aiModels": ["example-model"]
+        }
+    },
+    "email": {
+        "enabled": false,
+        "smtp": {
+            "host": "smtp.qq.com",
+            "port": 465,
+            "secure": true,
+            "user": "",
+            "pass": ""
+        },
+        "from": "",
+        "recipients": [],
+        "retryCount": 3
+    },
+    "report": {
+        "enabled": true,
+        "sendEmail": false,
+        "schedule": {
+            "halfDailyTimes": ["12:00", "18:00"],
+            "weeklyTime": "20:00",
+            "weeklyDayOfWeek": 1,
+            "monthlyTime": "20:00",
+            "monthlyDayOfMonth": 1
+        },
+        "generation": {
+            "topNTopics": 20,
+            "interestScoreThreshold": 0,
+            "llmRetryCount": 3,
+            "aiModels": ["example-model"]
+        }
+    },
+    "preStartCommand": {
+        "enabled": false,
+        "command": "",
+        "silent": false,
+        "detached": false
+    }
+}

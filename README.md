@@ -8,7 +8,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href=".nvmrc"><img src="https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg" alt="Node.js"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/pnpm-10.15.0-orange.svg" alt="pnpm"></a>
-  <a href="#"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
+  <a href="#-贡献指南"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
 </p>
 
 ---
@@ -20,17 +20,21 @@
 > **前提：** 已安装 [Node.js](https://nodejs.org/)（≥ v20）、[pnpm](https://pnpm.io/)、[MongoDB](https://www.mongodb.com/try/download/community) 和 [Ollama](https://ollama.com/)。
 
 ```bash
-# 1. 安装依赖
+# 1. 克隆项目
+git clone https://github.com/<your-org>/synthos.git
+cd synthos
+
+# 2. 安装依赖
 pnpm install
 
-# 2. 创建配置文件
+# 3. 创建配置文件
 cp synthos_config.example.json synthos_config.json
 # 🔴 编辑 synthos_config.json，填入你的 LLM API Key 等必要配置
 
-# 3. 下载 Embedding 模型
+# 4. 下载 Embedding 模型
 ollama pull bge-m3
 
-# 4. 一键启动 🎯
+# 5. 一键启动
 # Windows:
 run.bat
 
@@ -39,6 +43,15 @@ bash run.sh
 ```
 
 启动后访问 **`http://localhost:3011`** 即可看到 WebUI。
+
+### 项目截图
+
+<p align="center">
+  <img src="docs\assets\前端白色.png" alt="WebUI 截图 1" width="45%">
+  <img src="docs\assets\前端暗黑.png" alt="WebUI 截图 2" width="45%">
+  <br>
+  <em>WebUI 界面预览</em>
+</p>
 
 ---
 
@@ -117,7 +130,7 @@ corepack prepare pnpm@10.15.0 --activate
 
 下载并安装 [MongoDB Community Edition](https://www.mongodb.com/try/download/community)，确保服务运行在 `localhost:27017`。
 
-> 如果你的 MongoDB 使用不同地址，可通过环境变量覆盖（见[环境变量](#-环境变量)）。
+> 如果你的 MongoDB 使用不同地址，可通过 `SYNTHOS_MONGODB_URL` 环境变量覆盖（见[环境变量](#-环境变量)表格）。
 
 ### 3. 安装 Ollama 与 Embedding 模型
 
@@ -171,7 +184,7 @@ cp synthos_config.example.json synthos_config.json
 
 > 兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。
 
-### 7. 配置 QQ 数据源（可选）
+### 6. 配置 QQ 数据源（可选）
 
 若需自动拉取 QQ 聊天记录，配置 `dataProviders.QQ`：
 
@@ -202,7 +215,7 @@ cp synthos_config.example.json synthos_config.json
 
 > ⚠️ `data-provider` 支持 **Windows x86_64** 和 **macOS Apple Silicon**。Linux 暂未实现。如果不需要自动拉取 QQ 数据，可跳过此模块。
 
-### 8. 配置群组
+### 7. 配置群组
 
 ```json
 {
@@ -261,30 +274,65 @@ bash run.sh
 
 ---
 
-## 🐳 Docker 部署
+## 🐳 Docker 部署（不成熟）
+
+项目提供完整的 Docker Compose 编排，包含 MongoDB、后端服务、Nginx 前端，开箱即用。
+
+### 前置条件
+
+- 已安装 [Docker](https://docs.docker.com/get-docker/) 和 Docker Compose
+- 宿主机已安装 [Ollama](https://ollama.com/) 并拉取 `bge-m3` 模型（或用 `--profile ollama` 使用内置 Ollama 容器）
+
+### 快速启动
 
 ```bash
-# 1. 准备配置目录
-mkdir -p docker/config
-cp synthos_config.json docker/config/
+# 1. 复制 Docker 专用配置模板
+cp docker/config/synthos_config.docker.example.json docker/config/synthos_config.json
 
-# 2. 按需编辑 docker/config/synthos_config.json
-#    注意：MongoDB 地址应改为 mongodb://mongo:27017/synthos
+# 2. 编辑配置，填入 LLM API Key（其余字段已针对 Docker 环境预配置好）
+#    🔴 必改：ai.models.<name>.apiKey 和 ai.defaultModelConfig.apiKey
 
 # 3. 启动全部服务
 docker compose up -d
 
-# 4. （可选）使用内置 Ollama 容器
-docker compose --profile ollama up -d
-# 进入 Ollama 容器拉取模型：
-docker exec -it synthos-ollama ollama pull bge-m3
-
-# 5. 访问
+# 4. 访问
 #    前端：http://localhost:8080
 #    后端 API：http://localhost:3002
 ```
 
-> ⚠️ `data-provider` 无法在 Docker 中运行（依赖宿主机 QQ 桌面客户端本地数据库 + VFS 插件），请在宿主机单独启动。
+### 使用内置 Ollama（可选）
+
+如果不希望依赖宿主机 Ollama，可启用内置容器：
+
+```bash
+docker compose --profile ollama up -d
+docker exec -it synthos-ollama ollama pull bge-m3
+
+# 同时修改 docker/config/synthos_config.json：
+# "ollamaBaseURL": "http://ollama:11434"  ← 改为 Ollama 服务名
+```
+
+### 服务说明
+
+| 服务 | 容器名 | 端口 |
+|------|--------|------|
+| MongoDB | `synthos-mongo` | `27017` |
+| AI Model | `synthos-ai-model` | `7979` |
+| WebUI Backend | `synthos-webui-backend` | `3002` |
+| WebUI Frontend (Nginx) | `synthos-webui-frontend` | `8080` |
+| Ollama（需 `--profile ollama`） | `synthos-ollama` | `11434` |
+
+### 数据持久化
+
+| 宿主机目录 | 容器内路径 | 用途 |
+|-----------|-----------|------|
+| `./docker/config/` | `/config`（只读） | 配置文件 |
+| `./docker/data/` | `/app/data` | SQLite / LevelDB / 向量数据库 |
+| `./docker/logs/` | `/app/logs` | 日志文件 |
+| `./docker/volumes/mongo/` | `/data/db` | MongoDB 数据 |
+| `./docker/volumes/ollama/` | `/root/.ollama` | Ollama 模型文件 |
+
+> ⚠️ `data-provider` 无法在容器中运行（需访问宿主机 QQ 桌面客户端本地数据库 + 平台特定 VFS 插件），请在宿主机通过 `pnpm --filter data-provider dev` 单独启动，并设置 `SYNTHOS_MONGODB_URL=mongodb://localhost:27017/synthos`。
 
 ---
 
@@ -432,19 +480,17 @@ ollama serve
 
 ### `pnpm install` 失败（Windows）
 
-确保满足以下条件：
-- 已安装 Python 3 和 C++ 构建工具（`better-sqlite3` 等原生模块需要编译）
-- 使用 PowerShell 或 cmd（不是 Git Bash）运行
+`better-sqlite3` 等原生模块需要编译，确保已安装 Visual Studio Build Tools：
 
 ```powershell
-# 方法一：安装 Visual Studio Build Tools（推荐）
+# 推荐：安装 Visual Studio Build Tools
 # 下载：https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
 # 安装时勾选 "Desktop development with C++"
+```
 
-# 方法二：通过 npm 安装（需管理员）
-npm install -g --production windows-build-tools@4.0.0
+或通过命令行安装：
 
-# 方法三：仅安装 Python（如已有 VS Build Tools）
+```powershell
 npm config set python python3
 ```
 
