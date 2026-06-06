@@ -184,7 +184,7 @@ cp synthos_config.example.json synthos_config.json
 
 > 兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。
 
-### 6. 配置 QQ 数据源（可选）
+### 6. 配置 QQ 数据源
 
 若需自动拉取 QQ 聊天记录，配置 `dataProviders.QQ`：
 
