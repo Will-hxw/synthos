@@ -47,8 +47,8 @@ bash run.sh
 ### 项目截图
 
 <p align="center">
-  <img src="./docs/assets/前端截图1.webp" alt="WebUI 截图 1" width="45%">
-  <img src="./docs/assets/前端截图2.webp" alt="WebUI 截图 2" width="45%">
+  <img src="docs\assets\image.png" alt="WebUI 截图 1" width="45%">
+  <img src="docs\assets\image copy.png" alt="WebUI 截图 2" width="45%">
   <br>
   <em>WebUI 界面预览</em>
 </p>
@@ -274,7 +274,7 @@ bash run.sh
 
 ---
 
-## 🐳 Docker 部署
+## 🐳 Docker 部署（不成熟）
 
 项目提供完整的 Docker Compose 编排，包含 MongoDB、后端服务、Nginx 前端，开箱即用。
 
