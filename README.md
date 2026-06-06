@@ -73,7 +73,7 @@ QQ 本地数据库 → [data-provider] → [preprocessing] → [ai-model] → [w
 
 | 模块 | 端口 | 职责 |
 |------|------|------|
-| `data-provider` | — | 从 QQ 本地数据库读取原始聊天记录（**仅限 Windows**） |
+| `data-provider` | — | 从 QQ 本地数据库读取原始聊天记录（Windows / macOS ARM） |
 | `preprocessing` | — | 清洗、分组、上下文拼接、引用消息解析 |
 | `ai-model` | `7979` | 文本向量化、摘要生成、兴趣度计算、RAG 检索 |
 | `orchestrator` | — | Pipeline 调度器，按时序编排各数据处理任务 |
@@ -93,7 +93,7 @@ QQ 本地数据库 → [data-provider] → [preprocessing] → [ai-model] → [w
 | **Ollama** | 最新版 | 本地 Embedding 模型服务 | ✅ |
 | **bge-m3** | — | 1024 维向量嵌入模型 | ✅ |
 
-> **注意：** `data-provider` 模块依赖 Windows QQNT 数据库，**仅在 Windows 下可用**。Linux/macOS 用户暂未实现，仅支持手动导入聊天数据。
+> **注意：** `data-provider` 模块支持 Windows x86_64 和 macOS Apple Silicon（需 QQ NT 桌面版）。Linux 暂未支持，可跳过此模块使用其他功能。
 
 ---
 
@@ -171,14 +171,22 @@ cp synthos_config.example.json synthos_config.json
 
 > 兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。
 
-### 7. 配置 QQ 数据源
+### 7. 配置 QQ 数据源（可选）
+
+若需自动拉取 QQ 聊天记录，配置 `dataProviders.QQ`：
 
 ```json
 {
   "dataProviders": {
     "QQ": {
+      // Windows x86_64
       "VFSExtPath": "./assets/sqlite_vfs_plugins/win_x86/sqlite_ext_ntqq_db.dll",
       "dbBasePath": "C:/Users/<用户名>/Documents/Tencent Files/<QQ号>/nt_qq/nt_db",
+
+      // macOS Apple Silicon（使用下面两行替换上面两行）
+      // "VFSExtPath": "./assets/sqlite_vfs_plugins/mac_arm64/libsqlite_ext_ntqq_db.dylib",
+      // "dbBasePath": "/Users/<用户名>/Library/Containers/com.tencent.qq/Data/Documents/nt_qq/nt_db",
+
       "dbKey": "<数据库密钥>",
       "dbPatch": { "enabled": false }
     }
@@ -186,11 +194,13 @@ cp synthos_config.example.json synthos_config.json
 }
 ```
 
-- `dbBasePath`：QQ 本地数据库目录路径（不同用户路径不同，具体情况具体分析）
-- `dbKey`：QQ 数据库加密密钥，获取方法详见 [QQ 数据库密钥文档](https://docs.aaqwq.top/)
-- `VFSExtPath`：SQLite VFS 扩展 DLL 路径（项目已内置 `win_x86` 版本）
+| 字段 | 说明 |
+|------|------|
+| `VFSExtPath` | SQLite VFS 扩展路径，项目内置 `win_x86`（`.dll`）和 `mac_arm64`（`.dylib`）两个版本 |
+| `dbBasePath` | QQ 本地数据库目录，不同操作系统路径不同，具体情况具体分析 |
+| `dbKey` | QQ 数据库加密密钥，获取方法详见 [QQ 数据库密钥文档](https://docs.aaqwq.top/) |
 
-> ⚠️ `data-provider` 仅限 Windows 系统。Linux/macOS 暂未实现
+> ⚠️ `data-provider` 支持 **Windows x86_64** 和 **macOS Apple Silicon**。Linux 暂未实现。如果不需要自动拉取 QQ 数据，可跳过此模块。
 
 ### 8. 配置群组
 
@@ -274,7 +284,7 @@ docker exec -it synthos-ollama ollama pull bge-m3
 #    后端 API：http://localhost:3002
 ```
 
-> ⚠️ `data-provider` 无法在 Docker 中运行（依赖 Windows QQNT 数据库 + VFS DLL），请在宿主机单独启动。
+> ⚠️ `data-provider` 无法在 Docker 中运行（依赖宿主机 QQ 桌面客户端本地数据库 + VFS 插件），请在宿主机单独启动。
 
 ---
 
@@ -338,7 +348,7 @@ docker exec -it synthos-ollama ollama pull bge-m3
 synthos/
 ├── applications/
 │   ├── ai-model/          # AI 模型服务：摘要、向量化、兴趣度、RAG
-│   ├── data-provider/     # QQ 数据源适配器（仅限 Windows）
+│   ├── data-provider/     # QQ 数据源适配器（Win / macOS ARM）
 │   ├── db-cli/            # 数据库命令行工具
 │   ├── orchestrator/      # Pipeline 调度编排
 │   ├── preprocessing/     # 数据预处理与清洗
@@ -438,9 +448,14 @@ npm install -g --production windows-build-tools@4.0.0
 npm config set python python3
 ```
 
-### `data-provider` 无法启动（非 Windows）
+### `data-provider` 无法启动
 
-`data-provider` 依赖 Windows QQNT 数据库，**仅支持 Windows**。Linux/macOS 用户请使用 `pnpm dev:webui` 跳过此模块。
+`data-provider` 需要本地安装 QQ NT 桌面版。支持的平台：
+- **Windows x86_64** — `VFSExtPath` 使用 `win_x86/sqlite_ext_ntqq_db.dll`
+- **macOS Apple Silicon** — `VFSExtPath` 使用 `mac_arm64/libsqlite_ext_ntqq_db.dylib`
+- **Linux** — 暂不支持
+
+如不需要自动拉取 QQ 数据，使用 `pnpm dev:webui` 跳过此模块即可。
 
 ---
 

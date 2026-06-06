@@ -111,9 +111,10 @@ services:
     ports:
       - "8080:80"
 
-  # data-provider cannot be containerized on Linux in Scheme B because it depends on
-  # the local QQNT database + a Windows-only VFS DLL. This is a *placeholder* service
-  # to make the architecture explicit.
+  # data-provider cannot be containerized because it needs access to the host's local
+  # QQ NT database files + a platform-specific VFS plugin (DLL/dylib).
+  # Supported on host: Windows x86_64, macOS Apple Silicon.
+  # This is a *placeholder* service to make the architecture explicit.
   data-provider:
     profiles: ["host-only"]
     image: alpine:3.20
@@ -122,7 +123,7 @@ services:
       - sh
       - -c
       - |
-        echo "[synthos] data-provider is host-only in Scheme B (Windows QQNT DB + VFS DLL).";
+        echo "[synthos] data-provider is host-only (needs local QQNT DB + VFS plugin).";
         echo "Run it on your host: pnpm --filter data-provider dev";
         echo "(and set SYNTHOS_MONGODB_URL=mongodb://localhost:27017/synthos)";
         sleep 3600
