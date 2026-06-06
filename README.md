@@ -183,6 +183,8 @@ pnpm dev:forwarder
 
 公网转发目标端口统一通过 `SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT` 覆盖。`pnpm dev:public-preview` 会自动把隧道目标设置为静态预览端口 `3012`；`pnpm dev:forwarder` 默认仍转发开发服务器端口 `3011`，调试其他前端目标时可使用同一变量覆盖。
 
+如果本机 ngrok inspector 已存在指向同一目标主机和端口的隧道，public tunnel 脚本会复用该公网地址，避免重复启动同一 endpoint 时触发 `ERR_NGROK_334`。
+
 ---
 
 **可用的启动脚本：**
