@@ -26,7 +26,7 @@ export class MiscController {
      */
     async getQQAvatar(req: Request, res: Response): Promise<void> {
         const params = GetQQAvatarSchema.parse(req.query);
-        const avatarBase64 = await this.miscService.getQQAvatarBase64(params.qqNumber);
+        const avatarBase64 = await this.miscService.getQQAvatarBase64(params.qqNumber, params.type);
 
         res.json({ success: true, data: { avatarBase64 } });
     }

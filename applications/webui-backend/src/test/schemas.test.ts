@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GetChatMessagesByGroupIdSchema } from "../schemas/index";
+import { GetChatMessagesByGroupIdSchema, GetQQAvatarSchema } from "../schemas/index";
 
 describe("GetChatMessagesByGroupIdSchema", () => {
     it("应把字符串数字时间戳解析为 number", () => {
@@ -36,5 +36,24 @@ describe("GetChatMessagesByGroupIdSchema", () => {
 
     it("缺少时间参数应抛错", () => {
         expect(() => GetChatMessagesByGroupIdSchema.parse({ groupId: "group-1" })).toThrow();
+    });
+});
+
+describe("GetQQAvatarSchema", () => {
+    it("未指定头像类型时应保持用户头像默认值", () => {
+        const parsed = GetQQAvatarSchema.parse({
+            qqNumber: "123456"
+        });
+
+        expect(parsed).toEqual({ qqNumber: "123456", type: "user" });
+    });
+
+    it("应支持显式请求群头像", () => {
+        const parsed = GetQQAvatarSchema.parse({
+            qqNumber: "123456",
+            type: "group"
+        });
+
+        expect(parsed).toEqual({ qqNumber: "123456", type: "group" });
     });
 });

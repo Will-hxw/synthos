@@ -97,6 +97,16 @@ const TopicCard: React.FC<TopicCardProps> = ({ topic, index, interestScore, favo
         </HeroUIButton>
     );
 
+    const shouldCaptureNode = (node: HTMLElement): boolean => node.dataset?.captureExclude !== "true";
+
+    const formatSaveImageError = (error: unknown): string => {
+        if (error instanceof Error && error.message) {
+            return error.message;
+        }
+
+        return String(error);
+    };
+
     const handleSaveAsImage = async () => {
         if (!cardCaptureRef.current) {
             return;
@@ -111,10 +121,11 @@ const TopicCard: React.FC<TopicCardProps> = ({ topic, index, interestScore, favo
             .slice(0, 24);
 
         try {
-            const { default: domtoimage } = await import("dom-to-image");
-            const dataUrl = await domtoimage.toPng(node, {
-                quality: 1.0,
-                bgcolor: "transparent"
+            const { toPng } = await import("html-to-image");
+            const dataUrl = await toPng(node, {
+                backgroundColor: "transparent",
+                cacheBust: true,
+                filter: shouldCaptureNode
             });
 
             const link = document.createElement("a");
@@ -131,7 +142,7 @@ const TopicCard: React.FC<TopicCardProps> = ({ topic, index, interestScore, favo
             console.error("保存图片失败:", error);
             Notification.error({
                 title: "保存失败",
-                description: "无法保存为图片（可能有跨域图片资源）。错误信息：" + JSON.stringify(error)
+                description: `无法保存为图片：${formatSaveImageError(error)}`
             });
         }
     };
@@ -164,11 +175,13 @@ const TopicCard: React.FC<TopicCardProps> = ({ topic, index, interestScore, favo
                     <div className="flex justify-between items-start">
                         {/* 话题标题 */}
                         <h3 className="text-lg font-bold max-w-60 word-break break-all">{topic.topic}</h3>
-                        <Tooltip color="default" content="复制话题内容" placement="top">
-                            <HeroUIButton isIconOnly size="sm" variant="light" onPress={handleCopy}>
-                                <Copy size={16} />
-                            </HeroUIButton>
-                        </Tooltip>
+                        <div data-capture-exclude="true">
+                            <Tooltip color="default" content="复制话题内容" placement="top">
+                                <HeroUIButton isIconOnly size="sm" variant="light" onPress={handleCopy}>
+                                    <Copy size={16} />
+                                </HeroUIButton>
+                            </Tooltip>
+                        </div>
                     </div>
                     {/* 时间范围（仅当有时间信息时显示） */}
                     {hasTime && (
@@ -218,7 +231,7 @@ const TopicCard: React.FC<TopicCardProps> = ({ topic, index, interestScore, favo
                     </div>
 
                     {/* 右下角的更多选项、收藏按钮和已读按钮 */}
-                    <div className="absolute bottom-3 right-3 flex gap-1">
+                    <div className="absolute bottom-3 right-3 flex gap-1" data-capture-exclude="true">
                         <Dropdown>
                             <DropdownTrigger>
                                 <HeroUIButton isIconOnly size="sm" variant="light">

@@ -320,6 +320,7 @@ Query：
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | qqNumber | string | 是 | QQ 号码 |
+| type | "user" \| "group" | 否 | 头像类型，默认 `user` |
 
 响应：
 
