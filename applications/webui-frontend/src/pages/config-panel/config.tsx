@@ -585,7 +585,7 @@ export default function ConfigPage() {
                         保存配置
                     </Button>
                     <Button className="w-full sm:w-auto" startContent={<RotateCcw className="w-4 h-4" />} variant="flat" onPress={handleReset}>
-                        撤销
+                        撤销修改
                     </Button>
                     <Button className="w-full sm:w-auto" startContent={<ChevronDown className="w-4 h-4" />} variant="flat" onPress={handleExpandAll}>
                         全部展开
