@@ -604,7 +604,7 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
                         >
                             智能 Agent 助手(暂关闭)
                         </div>
-                        <p className="text-default-500 text-sm md:text-base">当前是新对话草稿，发送第一条消息后会自动保存到历史会话</p>
+                        <p className="text-default-500 text-sm md:text-base">Agent 自主决策SQL搜索和RAG检索</p>
                     </motion.div>
                 ) : (
                     <>
