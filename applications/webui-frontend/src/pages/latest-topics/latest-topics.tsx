@@ -24,7 +24,7 @@ import ResponsivePopover from "@/components/ResponsivePopover";
 
 const MIN_UNIX_MS_TIMESTAMP = 0;
 const DEFAULT_TOPICS_PER_PAGE = 12;
-const DEFAULT_RECENT_DAYS = 30;
+const DEFAULT_RECENT_DAYS = 730;
 const TOPICS_PER_PAGE_OPTIONS = [3, 6, 9, 12, 30] as const;
 
 const LatestTopicsFilterPanel = lazy(() => import("./components/LatestTopicsFilterPanel"));
@@ -267,7 +267,7 @@ export default function LatestTopicsPage() {
         if (initialState.hasInvalidDateRange) {
             Notification.error({
                 title: "日期参数无效",
-                description: "URL中的时间范围无效，已使用默认最近30天"
+                description: "URL中的时间范围无效，已使用默认最近2年"
             });
         }
 
