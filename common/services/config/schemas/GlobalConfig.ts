@@ -117,17 +117,19 @@ export const GlobalConfigObjectSchema = z.object({
                         .describe("数据库补丁配置"),
                     sourceReconcile: z
                         .object({
+                            enabled: z.boolean().default(true).describe("是否启用 QQ 原库回填"),
                             batchSize: z
                                 .number()
-                                .positive()
                                 .int()
+                                .min(0)
                                 .max(QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX)
                                 .default(QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT)
                                 .describe(
-                                    `QQ 原库回填每个群每轮扫描的业务消息数量，最大 ${QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX}`
+                                    `QQ 原库回填每个群每轮扫描的业务消息数量；enabled=false 时可为 0，最大 ${QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX}`
                                 )
                         })
                         .default({
+                            enabled: true,
                             batchSize: QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT
                         })
                         .describe("QQ 原库回填配置")
@@ -299,6 +301,15 @@ const addMissingModelIssue = (ctx: z.RefinementCtx, path: (string | number)[], m
 
 export const GlobalConfigSchema = GlobalConfigObjectSchema.superRefine((config, ctx) => {
     const models = config.ai.models;
+    const sourceReconcile = config.dataProviders.QQ.sourceReconcile;
+
+    if (sourceReconcile.enabled && sourceReconcile.batchSize <= 0) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["dataProviders", "QQ", "sourceReconcile", "batchSize"],
+            message: "启用 QQ 原库回填时 batchSize 必须大于 0"
+        });
+    }
 
     if (!hasConfiguredModel(models, config.ai.defaultModelName)) {
         addMissingModelIssue(ctx, ["ai", "defaultModelName"], config.ai.defaultModelName);

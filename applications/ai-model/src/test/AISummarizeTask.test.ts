@@ -193,6 +193,7 @@ describe("AISummarizeTaskHandler", () => {
             2_000_000
         );
 
+        expect(mockImDbAccessService.getUnsummarizedSessionStatsByGroupId).toHaveBeenCalledWith("group-a", 100);
         expect(mockSubmitTasks.mock.calls[0][0]).toHaveLength(1);
         expect(mockSubmitTasks.mock.calls[0][0][0].context.sessionId).toBe("historical-session");
         expect(mockAgcDbAccessService.commitSessionDigest).toHaveBeenCalledOnce();

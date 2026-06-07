@@ -83,11 +83,18 @@ export class ProvideDataTaskHandler {
 
                     if (this._isQQSourceReconcileProvider(activeProvider)) {
                         const config = await this.configManagerService.getCurrentConfig();
+                        const sourceReconcileConfig = config.dataProviders.QQ.sourceReconcile;
 
-                        qqSourceCursorStore = new KVStore<QQSourceReconcileStoreValue>(
-                            path.join(config.webUI_Backend.kvStoreBasePath, "data-provider", "qq-source-reconcile")
-                        );
-                        qqSourceReconcileBatchSize = config.dataProviders.QQ.sourceReconcile.batchSize;
+                        if (sourceReconcileConfig.enabled) {
+                            qqSourceCursorStore = new KVStore<QQSourceReconcileStoreValue>(
+                                path.join(
+                                    config.webUI_Backend.kvStoreBasePath,
+                                    "data-provider",
+                                    "qq-source-reconcile"
+                                )
+                            );
+                            qqSourceReconcileBatchSize = sourceReconcileConfig.batchSize;
+                        }
                     }
 
                     for (const groupId of attrs.groupIds) {

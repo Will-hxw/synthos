@@ -9,6 +9,7 @@
                 "patchSQL": ""
             },
             "sourceReconcile": {
+                "enabled": false,
                 "batchSize": 5000
             }
         }
