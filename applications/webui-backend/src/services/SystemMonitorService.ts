@@ -16,7 +16,10 @@ const LOGGER = Logger.withTag("SystemMonitorService");
 @injectable()
 export class SystemMonitorService {
     private statsHistory: SystemStats[] = [];
+    private readonly COLLECTION_INTERVAL_MS = 1000;
     private readonly MAX_HISTORY_LENGTH = 300; // 5分钟 * 60秒
+    private readonly RUNTIME_STATS_CACHE_MS = 60 * 1000;
+    private runtimeStatsCache: { value: SystemRuntimeStats; expiresAt: number } | null = null;
     private collectionInterval: NodeJS.Timeout | null = null;
     private LOGGER = Logger.withTag("SystemMonitorService");
 
@@ -44,7 +47,7 @@ export class SystemMonitorService {
             } catch (error) {
                 LOGGER.error(`Failed to collect system stats: ${error}`);
             }
-        }, 1000);
+        }, this.COLLECTION_INTERVAL_MS);
         this.LOGGER.info("系统信息收集服务已启动");
     }
 
@@ -123,6 +126,23 @@ export class SystemMonitorService {
     }
 
     private async _getRuntimeStats(): Promise<SystemRuntimeStats> {
+        const now = Date.now();
+
+        if (this.runtimeStatsCache && this.runtimeStatsCache.expiresAt > now) {
+            return this.runtimeStatsCache.value;
+        }
+
+        const runtimeStats = await this._fetchRuntimeStats();
+
+        this.runtimeStatsCache = {
+            value: runtimeStats,
+            expiresAt: now + this.RUNTIME_STATS_CACHE_MS
+        };
+
+        return runtimeStats;
+    }
+
+    private async _fetchRuntimeStats(): Promise<SystemRuntimeStats> {
         try {
             const embedding = await this.ragClient.runtimeStatus.query();
 

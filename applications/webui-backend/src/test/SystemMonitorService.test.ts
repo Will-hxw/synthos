@@ -50,6 +50,26 @@ describe("SystemMonitorService", () => {
         });
     });
 
+    it("应缓存 runtime 状态，避免每秒触发 Ollama 可用性检查", async () => {
+        const runtimeStatusQuery = vi.fn().mockResolvedValue({
+            model: "bge-m3",
+            ollamaReachable: true,
+            modelInstalled: true,
+            vectorTopicCount: 12,
+            checkedAt: 1000
+        });
+        const service = createService({
+            runtimeStatus: {
+                query: runtimeStatusQuery
+            }
+        });
+
+        await (service as any)._getRuntimeStats();
+        await (service as any)._getRuntimeStats();
+
+        expect(runtimeStatusQuery).toHaveBeenCalledTimes(1);
+    });
+
     it("ai-model 不可达时应返回降级状态", async () => {
         const service = createService({
             runtimeStatus: {

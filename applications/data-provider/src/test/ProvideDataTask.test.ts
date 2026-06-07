@@ -98,6 +98,7 @@ describe("ProvideDataTaskHandler", () => {
             dataProviders: {
                 QQ: {
                     sourceReconcile: {
+                        enabled: true,
                         batchSize: 50000
                     }
                 }
@@ -240,6 +241,7 @@ describe("ProvideDataTaskHandler", () => {
             dataProviders: {
                 QQ: {
                     sourceReconcile: {
+                        enabled: true,
                         batchSize: 1234
                     }
                 }
@@ -264,6 +266,34 @@ describe("ProvideDataTaskHandler", () => {
                 reachedEnd: true
             })
         );
+    });
+
+    it("禁用 QQ 原库回填时不应扫描原库", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValue({
+            dataProviders: {
+                QQ: {
+                    sourceReconcile: {
+                        enabled: false,
+                        batchSize: 0
+                    }
+                }
+            },
+            webUI_Backend: {
+                kvStoreBasePath: "D:\\tmp\\synthos-kv"
+            }
+        });
+
+        await runProvideDataJob({
+            groupIds: ["group-a"],
+            startTimeStamp: 1_000,
+            endTimeStamp: 30_000
+        });
+
+        expect(mockKVStoreConstructor).not.toHaveBeenCalled();
+        expect(mockQQProvider.getBusinessMsgIdPageAfterCursor).not.toHaveBeenCalled();
+        expect(mockQQProvider.getMsgsByMsgIds).not.toHaveBeenCalled();
+        expect(mockCursorStore.put).not.toHaveBeenCalled();
+        expect(mockCursorStore.del).not.toHaveBeenCalled();
     });
 
     async function runProvideDataJob(data: {

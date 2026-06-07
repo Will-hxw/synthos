@@ -75,6 +75,7 @@ const mockMainConfig = {
                 enabled: false
             },
             sourceReconcile: {
+                enabled: true,
                 batchSize: 50000
             }
         }
@@ -391,6 +392,7 @@ describe("ConfigManagerService", () => {
             service = new ConfigManagerService();
             const config = await service.getCurrentConfig();
 
+            expect(config.dataProviders.QQ.sourceReconcile.enabled).toBe(true);
             expect(config.dataProviders.QQ.sourceReconcile.batchSize).toBe(QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT);
         });
 
@@ -637,6 +639,45 @@ describe("ConfigManagerService", () => {
             const result = service.validateConfig(mockMainConfig);
 
             expect(result.success).toBe(true);
+        });
+
+        it("禁用 QQ 原库回填时允许 batchSize 为 0", () => {
+            service = new ConfigManagerService();
+            const disabledSourceReconcileConfig = {
+                ...mockMainConfig,
+                dataProviders: {
+                    QQ: {
+                        ...mockMainConfig.dataProviders.QQ,
+                        sourceReconcile: {
+                            enabled: false,
+                            batchSize: 0
+                        }
+                    }
+                }
+            };
+            const result = service.validateConfig(disabledSourceReconcileConfig);
+
+            expect(result.success).toBe(true);
+        });
+
+        it("启用 QQ 原库回填时 batchSize 必须大于 0", () => {
+            service = new ConfigManagerService();
+            const invalidConfig = {
+                ...mockMainConfig,
+                dataProviders: {
+                    QQ: {
+                        ...mockMainConfig.dataProviders.QQ,
+                        sourceReconcile: {
+                            enabled: true,
+                            batchSize: 0
+                        }
+                    }
+                }
+            };
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("batchSize"))).toBe(true);
         });
 
         it("对无效配置应返回失败和错误信息", () => {
