@@ -211,7 +211,12 @@ cp synthos_config.example.json synthos_config.json
 |------|------|
 | `VFSExtPath` | SQLite VFS 扩展路径，项目内置 `win_x86`（`.dll`）和 `mac_arm64`（`.dylib`）两个版本 |
 | `dbBasePath` | QQ 本地数据库目录，不同操作系统路径不同，具体情况具体分析 |
-| `dbKey` | QQ 数据库加密密钥，获取方法参考以下资料：[QQ 数据库密钥文档](https://docs.aaqwq.top/)、[qq-win-database-key](https://github.com/thelastede/qq-win-database-key)、[qq-win-db-key](https://github.com/QQBackup/qq-win-db-key) |
+| `dbKey` | QQ 数据库加密密钥 |
+
+**数据库密钥获取方式：**
+
+- **Windows**：可直接使用 `QQDatabaseKey.exe`。在 QQ 已登录状态下运行 `QQDatabaseKey.exe`，程序会自动退出 QQ；此时重新登录 QQ，程序会获取数据库密钥并写入 `password.txt`，从该文件复制密钥填入 `dbKey`。
+- **其他操作系统**：沿用原参考资料获取：[QQ 数据库密钥文档](https://docs.aaqwq.top/)、[qq-win-db-key](https://github.com/QQBackup/qq-win-db-key)。
 
 > ⚠️ `data-provider` 支持 **Windows x86_64** 和 **macOS Apple Silicon**。Linux 暂未实现。如果不需要自动拉取 QQ 数据，可跳过此模块。
 
