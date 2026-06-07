@@ -17,6 +17,64 @@ import { COMMON_TOKENS } from "@root/common/di/tokens";
 
 import { JsonPromptStore } from "../../../context/prompts/JsonPromptStore";
 
+/**
+ * DeepSeek thinking 模式需要 reason_content 在多轮对话中被回传。
+ * 但 @langchain/openai@1.x 不处理该字段，因此：
+ * - reasoningRegistry：按消息 content 存储上次响应的 reasoning_content
+ * - createReasoningAwareFetch：自定义 fetch，在发送请求时将 reasoning_content 注入 assistant 消息
+ * - 消费后立即 delete 防止内存泄漏，同时 FIFO 上限 100 作为兜底
+ */
+const REASONING_REGISTRY_MAX_SIZE = 100;
+const reasoningRegistry = new Map<string, string>();
+
+/** 注册某条 assistant 消息对应的 reasoning_content */
+export function registerReasoningContent(messageContent: string, reasoningContent: string): void {
+    if (reasoningContent && messageContent) {
+        reasoningRegistry.set(messageContent, reasoningContent);
+    }
+}
+
+function createReasoningAwareFetch(): typeof fetch {
+    const realFetch = globalThis.fetch;
+
+    return async (input, init) => {
+        if (init?.body && typeof init.body === "string") {
+            try {
+                const body = JSON.parse(init.body);
+
+                if (body.messages && Array.isArray(body.messages)) {
+                    body.messages = body.messages.map((msg: Record<string, unknown>) => {
+                        if (msg.role === "assistant" && typeof msg.content === "string") {
+                            const rc = reasoningRegistry.get(msg.content);
+
+                            if (rc) {
+                                reasoningRegistry.delete(msg.content); // 消费即清理，防止内存泄漏
+
+                                return { ...msg, reasoning_content: rc };
+                            }
+                        }
+
+                        return msg;
+                    });
+                    init = { ...init, body: JSON.stringify(body) };
+                }
+            } catch {
+                // 非 JSON body 或格式不符，静默跳过
+            }
+        }
+
+        // 兜底：FIFO 上限，防止极端情况下未消费的条目无限堆积
+        while (reasoningRegistry.size > REASONING_REGISTRY_MAX_SIZE) {
+            const firstKey = reasoningRegistry.keys().next().value as string | undefined;
+
+            if (firstKey) reasoningRegistry.delete(firstKey);
+            else break;
+        }
+
+        return realFetch(input, init);
+    };
+}
+
 type JsonFailureStage =
     | "raw_validation_failed"
     | "raw_non_json"
@@ -119,6 +177,15 @@ export class TextGeneratorService extends Disposable {
             model: modelName,
             temperature: temperature ?? modelConfig.temperature,
             maxTokens: maxTokens ?? modelConfig.maxTokens
+        };
+
+        // DeepSeek thinking 模式：API 返回 reasoning_content，多轮对话中必须回传。
+        // @langchain/openai@1.x 不处理该字段 → 通过自定义 fetch 注入 reasoning_content，
+        // 并开启 includeRawResponse 以便在消费端捕捉 reasoning_content。
+        options.__includeRawResponse = true;
+        options.configuration = {
+            ...options.configuration,
+            fetch: createReasoningAwareFetch()
         };
 
         if (!modelConfig.reasoning.enabled) {

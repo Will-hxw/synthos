@@ -24,7 +24,7 @@ import Logger from "@root/common/util/Logger";
 import { z } from "zod";
 
 import { AI_MODEL_TOKENS } from "../di/tokens";
-import { TextGeneratorService } from "../services/generators/text/TextGeneratorService";
+import { TextGeneratorService, registerReasoningContent } from "../services/generators/text/TextGeneratorService";
 import { ToolCallParser } from "../agent/utils/ToolCallParser";
 
 import { AgentToolCatalog } from "./AgentToolCatalog";
@@ -194,12 +194,14 @@ export class LangGraphAgentExecutor {
             return undefined;
         }
 
-        // Sanity check: provider 可能返回占位 token 数（例如 1/1/2），对较长 prompt 不可能成立
+        // Sanity check: provider 可能返回占位 token 数（例如 1/1/2），对较长 prompt 不可能成立。
+        // 但 Agent 的 tool_calls 响应天生是紧凑 JSON（字符多但 token 少），跳过 completion 侧检查。
         const promptChars = this._estimateMessageChars(messages);
         const completionChars = completionText?.length ?? 0;
+        const hasToolCalls = lastChunk?.tool_calls?.length > 0 || lastChunk?.tool_call_chunks?.length > 0;
 
         const suspiciousPrompt = promptChars > 200 && usage.promptTokens <= 5;
-        const suspiciousCompletion = completionChars > 80 && usage.completionTokens <= 5;
+        const suspiciousCompletion = !hasToolCalls && completionChars > 80 && usage.completionTokens <= 5;
         const suspiciousTotal = promptChars + completionChars > 300 && usage.totalTokens <= 10;
 
         if (suspiciousPrompt || suspiciousCompletion || suspiciousTotal) {
@@ -273,16 +275,36 @@ export class LangGraphAgentExecutor {
     }
 
     /**
-     * 合并同一个 tool_call 的流式增量参数。
+     * 合并同一个 tool_call 的流式增量参数（深度合并，保留嵌套结构）。
      */
     private _mergeToolCallArguments(
         base: Record<string, unknown>,
         delta: Record<string, unknown>
     ): Record<string, unknown> {
-        return {
-            ...base,
-            ...delta
-        };
+        const result = { ...base };
+
+        for (const key of Object.keys(delta)) {
+            const baseVal = result[key];
+            const deltaVal = delta[key];
+
+            if (
+                baseVal != null &&
+                typeof baseVal === "object" &&
+                !Array.isArray(baseVal) &&
+                deltaVal != null &&
+                typeof deltaVal === "object" &&
+                !Array.isArray(deltaVal)
+            ) {
+                result[key] = this._mergeToolCallArguments(
+                    baseVal as Record<string, unknown>,
+                    deltaVal as Record<string, unknown>
+                );
+            } else {
+                result[key] = deltaVal;
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -382,8 +404,9 @@ export class LangGraphAgentExecutor {
         temperature: number | undefined;
         maxTokens: number | undefined;
         abortSignal: AbortSignal | undefined;
-    }): Promise<{ content: string; toolCalls: ToolCall[]; usage?: TokenUsage }> {
+    }): Promise<{ content: string; toolCalls: ToolCall[]; usage?: TokenUsage; reasoningContent?: string }> {
         let fullContent = "";
+        let reasoningContentAcc = "";
         let lastChunk: any = null;
 
         const toolCallDrafts = new Map<
@@ -450,6 +473,13 @@ export class LangGraphAgentExecutor {
                     conversationId: args.conversationId,
                     content: chunk.content
                 });
+            }
+
+            // 从 raw response 中提取 reasoning_content（DeepSeek thinking 模式）
+            const rawDelta = chunk.additional_kwargs?.__raw_response?.choices?.[0]?.delta;
+
+            if (rawDelta?.reasoning_content) {
+                reasoningContentAcc += rawDelta.reasoning_content;
             }
 
             if (chunk.tool_calls && chunk.tool_calls.length > 0) {
@@ -527,7 +557,7 @@ export class LangGraphAgentExecutor {
             }
         }
 
-        return { content: fullContent, toolCalls, usage };
+        return { content: fullContent, toolCalls, usage, reasoningContent: reasoningContentAcc };
     }
 
     /**
@@ -595,7 +625,7 @@ export class LangGraphAgentExecutor {
                 );
             }
 
-            const { content, toolCalls, usage } = await this._callLLMStream({
+            const { content, toolCalls, usage, reasoningContent } = await this._callLLMStream({
                 messages: promptMessages,
                 tools,
                 enabledTools: state.enabledTools,
@@ -606,13 +636,23 @@ export class LangGraphAgentExecutor {
                 abortSignal: config.abortSignal
             });
 
+            // 将 reasoning_content 注入 AIMessage 并注册到全局 registry，
+            // 确保后续 LLM 调用时能通过自定义 fetch 回传给 DeepSeek API
+            const aiMessageAdditionalKwargs: Record<string, unknown> = {};
+
+            if (reasoningContent && content) {
+                aiMessageAdditionalKwargs.reasoning_content = reasoningContent;
+                registerReasoningContent(content, reasoningContent);
+            }
+
             const aiMessage = new AIMessage({
                 content: content || "",
                 tool_calls: toolCalls.map(tc => ({
                     id: tc.id,
                     name: tc.name,
                     args: tc.arguments
-                }))
+                })),
+                additional_kwargs: aiMessageAdditionalKwargs
             });
 
             return {

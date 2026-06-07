@@ -16,7 +16,7 @@ import { Notification } from "@/util/Notification";
 import { SummaryCard, SessionTable, UnassignedMessageTable, formatTimestamp } from "./components/DigestCoverageTables";
 
 const DEFAULT_DETAIL_LIMIT = 100;
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_TIME_START = new Date("2024-01-01T00:00:00").getTime();
 
 interface InitialState {
     selectedGroupId: string;
@@ -67,7 +67,7 @@ const getInitialState = (searchParams: URLSearchParams): InitialState => {
     const parsedEnd = parseUnixMsParam(searchParams.get("timeEnd"));
     const hasValidRange = parsedStart !== null && parsedEnd !== null && parsedEnd >= parsedStart;
     const timeEnd = hasValidRange ? parsedEnd : now;
-    const timeStart = hasValidRange ? parsedStart : now - ONE_DAY_MS;
+    const timeStart = hasValidRange ? parsedStart : DEFAULT_TIME_START;
 
     return {
         selectedGroupId: searchParams.get("groupId") || "",
