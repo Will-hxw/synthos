@@ -34,6 +34,7 @@ import { SystemMonitorService } from "../services/SystemMonitorService";
 import { AgentService } from "../services/AgentService";
 import { LogsService } from "../services/LogsService";
 import { SetupStatusService } from "../services/SetupStatusService";
+import { DigestCoverageDiagnosisService } from "../services/DigestCoverageDiagnosisService";
 import { createRAGClient } from "../rpc/aiModelClient";
 import { AIDigestController } from "../controllers/AIDigestController";
 import { ChatMessageController } from "../controllers/ChatMessageController";
@@ -122,6 +123,7 @@ export function registerServices(): void {
     container.registerSingleton(TOKENS.AgentService, AgentService);
     container.registerSingleton(TOKENS.LogsService, LogsService);
     container.registerSingleton(TOKENS.SetupStatusService, SetupStatusService);
+    container.registerSingleton(TOKENS.DigestCoverageDiagnosisService, DigestCoverageDiagnosisService);
     // EmailService 现在从 common 注册
     registerEmailService();
 }

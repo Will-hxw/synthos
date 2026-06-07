@@ -81,6 +81,68 @@ describe("ImDbAccessService", () => {
         expect(params).toEqual(["group-a", expect.any(Number), 10]);
     });
 
+    it("摘要覆盖诊断应按群和时间范围只读聚合三表状态", async () => {
+        mockCommonDBService.get.mockResolvedValue({
+            messageCount: 3,
+            assignedMessageCount: 2,
+            unassignedMessageCount: 1,
+            assignedSessionCount: 1,
+            timeStart: 100,
+            timeEnd: 200,
+            unassignedTimeStart: 150,
+            unassignedTimeEnd: 150
+        });
+        mockCommonDBService.all
+            .mockResolvedValueOnce([
+                {
+                    sessionId: "session-1",
+                    messageCount: 2,
+                    timeStart: 100,
+                    timeEnd: 200,
+                    status: "failed",
+                    updateTime: 300,
+                    processingStartedAt: null,
+                    failReason: "模型失败",
+                    statusTopicCount: 0,
+                    resultTopicCount: 0
+                }
+            ])
+            .mockResolvedValueOnce([
+                {
+                    msgId: "msg-2",
+                    timestamp: 150,
+                    senderId: "sender-1",
+                    senderNickname: "发送者",
+                    messageContent: "未分配消息"
+                }
+            ]);
+        const service = new ImDbAccessService();
+
+        await service.init();
+        const result = await service.getDigestCoverageSnapshotByGroupIdAndTimeRange("group-a", 100, 200, 50);
+
+        const rawSql = mockCommonDBService.get.mock.calls[0][0] as string;
+        const rawParams = mockCommonDBService.get.mock.calls[0][1];
+        const sessionSql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const sessionParams = mockCommonDBService.all.mock.calls[0][1];
+        const sampleSql = mockCommonDBService.all.mock.calls[1][0] as string;
+        const sampleParams = mockCommonDBService.all.mock.calls[1][1];
+
+        expect(rawSql).toContain("COUNT(*) AS messageCount");
+        expect(rawSql).toContain("WHERE groupId = ? AND timestamp BETWEEN ? AND ?");
+        expect(rawParams).toEqual(["group-a", 100, 200]);
+        expect(sessionSql).toContain("FROM chat_messages");
+        expect(sessionSql).toContain("LEFT JOIN ai_digest_sessions");
+        expect(sessionSql).toContain("FROM ai_digest_results");
+        expect(sessionSql).toContain("sessionId IS NOT NULL");
+        expect(sessionParams).toEqual(["group-a", 100, 200]);
+        expect(sampleSql).toContain("sessionId IS NULL");
+        expect(sampleParams).toEqual(["group-a", 100, 200, 50]);
+        expect(result.rawMessageStats.unassignedMessageCount).toBe(1);
+        expect(result.sessions[0].sessionId).toBe("session-1");
+        expect(result.unassignedMessageSamples[0].msgId).toBe("msg-2");
+    });
+
     it("应批量查询会话时间范围并按输入顺序返回，缺失会话以 undefined 占位", async () => {
         mockCommonDBService.all.mockResolvedValue([
             { sessionId: "session-2", timeStart: 300, timeEnd: 500 },

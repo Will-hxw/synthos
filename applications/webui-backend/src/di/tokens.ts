@@ -43,6 +43,7 @@ export const TOKENS = {
     AgentService: Symbol.for("AgentService"),
     LogsService: Symbol.for("LogsService"),
     SetupStatusService: Symbol.for("SetupStatusService"),
+    DigestCoverageDiagnosisService: Symbol.for("DigestCoverageDiagnosisService"),
     EmailService: COMMON_TOKENS.EmailService,
 
     // Controllers
