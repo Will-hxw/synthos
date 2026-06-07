@@ -867,7 +867,7 @@ Body：
 
 Body：`GlobalConfig`
 
-成功：`{ success: true, message: "基础配置保存成功" }`
+成功：`{ success: true, message: "配置已保存。请重启相关服务后生效。" }`
 
 失败（HTTP 400）：
 
@@ -884,7 +884,7 @@ Body：`GlobalConfig`
 Body：`PartialGlobalConfig`
 
 - 验证失败（HTTP 400）：`{ success: false, error: "配置验证失败", details: string[] }`
-- 保存成功：`{ success: true, message: "配置保存成功，请手动重启服务以使配置生效" }`
+- 保存成功：`{ success: true, message: "配置已保存。请重启相关服务后生效。" }`
 
 ### POST /api/config/validate
 

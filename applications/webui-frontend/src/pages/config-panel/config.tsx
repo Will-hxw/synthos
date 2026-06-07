@@ -25,6 +25,7 @@ import DefaultLayout from "@/layouts/default";
 import { Notification } from "@/util/Notification";
 
 const DiffEditor = lazy(() => import("@monaco-editor/react").then(module => ({ default: module.DiffEditor })));
+const CONFIG_SAVE_RESTART_NOTICE = "配置已保存。请重启相关服务后生效。";
 
 /**
  * 将后端返回的校验错误归一化为 { path, message } 结构。
@@ -432,7 +433,9 @@ export default function ConfigPage() {
 
             if (response.success) {
                 setSaveStatus("success");
-                Notification.success({ title: "保存成功", description: "基础配置已成功更新" });
+                const description = response.message || response.data?.message || CONFIG_SAVE_RESTART_NOTICE;
+
+                Notification.success({ title: "保存成功", description });
                 setTimeout(() => setSaveStatus("idle"), 3000);
             } else {
                 setSaveStatus("error");

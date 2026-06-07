@@ -8,6 +8,8 @@ import { injectable, inject } from "tsyringe";
 import { TOKENS } from "../di/tokens";
 import { ConfigService } from "../services/ConfigService";
 
+const CONFIG_SAVE_RESTART_NOTICE = "配置已保存。请重启相关服务后生效。";
+
 @injectable()
 export class ConfigController {
     constructor(@inject(TOKENS.ConfigService) private configService: ConfigService) {}
@@ -56,7 +58,7 @@ export class ConfigController {
 
         try {
             await this.configService.saveBaseConfig(config);
-            res.json({ success: true, message: "基础配置保存成功" });
+            res.json({ success: true, message: CONFIG_SAVE_RESTART_NOTICE });
         } catch (error: any) {
             res.status(400).json({ success: false, error: error.message });
         }
@@ -97,7 +99,7 @@ export class ConfigController {
         await this.configService.saveOverrideConfig(config);
         res.json({
             success: true,
-            message: "配置保存成功，请手动重启服务以使配置生效"
+            message: CONFIG_SAVE_RESTART_NOTICE
         });
     }
 

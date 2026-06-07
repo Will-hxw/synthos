@@ -7,6 +7,7 @@ import type { ConfigValidationResult, JsonSchema } from "@/api/configApi";
 import type { ApiResponse } from "@/types/api";
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const CONFIG_SAVE_RESTART_NOTICE = "配置已保存。请重启相关服务后生效。";
 
 let baseConfig: Record<string, unknown> = {
     report: {
@@ -152,8 +153,8 @@ export const mockSaveOverrideConfig = async (config: Record<string, unknown>): P
 
     return {
         success: true,
-        data: { message: "override 配置已保存（Mock）" },
-        message: ""
+        data: { message: CONFIG_SAVE_RESTART_NOTICE },
+        message: CONFIG_SAVE_RESTART_NOTICE
     };
 };
 
@@ -164,8 +165,8 @@ export const mockSaveBaseConfig = async (config: Record<string, unknown>): Promi
 
     return {
         success: true,
-        data: { message: "基础配置已保存（Mock）" },
-        message: ""
+        data: { message: CONFIG_SAVE_RESTART_NOTICE },
+        message: CONFIG_SAVE_RESTART_NOTICE
     };
 };
 
