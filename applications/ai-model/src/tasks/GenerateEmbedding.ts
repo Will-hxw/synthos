@@ -51,9 +51,18 @@ export class GenerateEmbeddingTaskHandler {
 
                 this.LOGGER.success(`Ollama 服务初始化完成，模型: ${config.ai.embedding.model}`);
 
-                // 检查 Ollama 服务是否可用
-                if (!(await this.embeddingService.isAvailable())) {
+                const embeddingStatus = await this.embeddingService.getAvailability();
+
+                if (!embeddingStatus.ollamaReachable) {
                     this.LOGGER.error("Ollama 服务不可用，跳过当前任务");
+
+                    return;
+                }
+
+                if (!embeddingStatus.modelInstalled) {
+                    this.LOGGER.error(
+                        `Embedding 模型 ${embeddingStatus.model} 未安装，请先执行 ollama pull ${embeddingStatus.model}，跳过当前任务`
+                    );
 
                     return;
                 }

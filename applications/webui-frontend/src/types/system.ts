@@ -1,7 +1,11 @@
-/**
- * 系统监控相关类型定义
- */
-import type { EmbeddingRuntimeStatus } from "@root/common/rpc/ai-model/index";
+export interface EmbeddingRuntimeStatus {
+    model: string;
+    ollamaReachable: boolean;
+    modelInstalled: boolean;
+    vectorTopicCount: number;
+    checkedAt: number;
+    error?: string;
+}
 
 export interface SystemRuntimeStats {
     aiModelReachable: boolean;
@@ -9,9 +13,6 @@ export interface SystemRuntimeStats {
     error?: string;
 }
 
-/**
- * 系统统计信息
- */
 export interface SystemStats {
     timestamp: number;
     storage: {

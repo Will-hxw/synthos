@@ -9,7 +9,9 @@ import { motion } from "framer-motion";
 
 import EmptyState from "../EmptyState";
 
+import RuntimeHint from "@/components/runtime/RuntimeHint";
 import ReferenceList from "@/components/topic-reference/ReferenceList";
+import { useSystemStats } from "@/hooks/useSystemStats";
 import { l2DistanceToRelevance } from "@/util/vectorRelevance";
 
 interface SearchPanelProps {
@@ -23,6 +25,9 @@ interface SearchPanelProps {
 }
 
 export default function SearchPanel({ searchLoading, searchResults, searchQuery, favoriteTopics, readTopics, onMarkAsRead, onToggleFavorite }: SearchPanelProps) {
+    const shouldShowRuntimeHint = !searchLoading && searchResults.length === 0 && searchQuery.trim().length > 0;
+    const { stats: systemStats, loading: systemStatsLoading } = useSystemStats(shouldShowRuntimeHint);
+
     if (searchLoading) {
         return (
             <motion.div animate={{ opacity: 1 }} className="flex flex-col items-center justify-center py-12 gap-4" initial={{ opacity: 0 }} transition={{ duration: 0.3 }}>
@@ -63,6 +68,7 @@ export default function SearchPanel({ searchLoading, searchResults, searchQuery,
         return (
             <motion.div animate={{ opacity: 1, y: 0 }} className="text-center py-12" initial={{ opacity: 0, y: 20 }} transition={{ duration: 0.3 }}>
                 <p className="text-default-500">未找到相关话题，请尝试其他关键词</p>
+                <RuntimeHint isLoading={systemStatsLoading} mode="embedding" stats={systemStats} />
             </motion.div>
         );
     }

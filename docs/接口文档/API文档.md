@@ -631,6 +631,18 @@ type SystemStats = {
     totalSize: number;
   };
   modules: Record<string, { cpu: number; memory: number }>;
+  runtime: {
+    aiModelReachable: boolean;
+    embedding: {
+      model: string;
+      ollamaReachable: boolean;
+      modelInstalled: boolean;
+      vectorTopicCount: number;
+      checkedAt: number;
+      error?: string;
+    } | null;
+    error?: string;
+  };
 };
 ```
 

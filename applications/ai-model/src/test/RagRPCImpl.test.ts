@@ -319,6 +319,43 @@ describe("RagRPCImpl", () => {
         expect(output[0]).toMatchObject({ topicId: "topic-1", topic: "话题1", distance: 0.1 });
     });
 
+    it("getRuntimeStatus 应返回 embedding 与向量库状态", async () => {
+        const vectorDB = {
+            getCount: vi.fn().mockReturnValue(12)
+        };
+        const embeddingService = {
+            getAvailability: vi.fn().mockResolvedValue({
+                model: "bge-m3",
+                ollamaReachable: true,
+                modelInstalled: true,
+                checkedAt: 1000
+            })
+        };
+        const rpcImpl = new RagRPCImpl(
+            {} as any,
+            vectorDB as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            embeddingService as any,
+            {} as any,
+            {} as any,
+            {} as any
+        );
+
+        const status = await rpcImpl.getRuntimeStatus();
+
+        expect(status).toEqual({
+            model: "bge-m3",
+            ollamaReachable: true,
+            modelInstalled: true,
+            checkedAt: 1000,
+            vectorTopicCount: 12
+        });
+    });
+
     it("ask 应按 L2 距离公式返回引用相关度", async () => {
         const embeddingService = {
             embed: vi.fn().mockResolvedValue(new Float32Array([1, 0]))

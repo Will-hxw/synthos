@@ -11,6 +11,7 @@ import { injectable, inject, container } from "tsyringe";
 import {
     RAGRPCImplementation,
     SearchOutput,
+    EmbeddingRuntimeStatus,
     AskOutput,
     AskStreamChunk,
     TriggerReportGenerateOutput,
@@ -122,6 +123,18 @@ export class RagRPCImpl implements RAGRPCImplementation {
         this.LOGGER.success(`搜索完成，返回 ${output.length} 条结果`);
 
         return output;
+    }
+
+    /**
+     * 获取 Embedding/Ollama/向量库运行状态
+     */
+    public async getRuntimeStatus(): Promise<EmbeddingRuntimeStatus> {
+        const embeddingStatus = await this.embeddingService.getAvailability();
+
+        return {
+            ...embeddingStatus,
+            vectorTopicCount: this.vectorDB.getCount()
+        };
     }
 
     /**

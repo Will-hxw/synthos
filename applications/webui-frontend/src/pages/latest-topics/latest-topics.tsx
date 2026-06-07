@@ -14,6 +14,7 @@ import { Check, Search } from "lucide-react";
 import { today, getLocalTimeZone, CalendarDate } from "@internationalized/date";
 
 import TopicCard from "@/components/topic/TopicCard";
+import RuntimeHint from "@/components/runtime/RuntimeHint";
 import { getGroupDetails } from "@/api/basicApi";
 import { getLatestTopics } from "@/api/latestTopicsApi";
 import { markTopicAsRead, markTopicAsFavorite, removeTopicFromFavorites } from "@/api/readAndFavApi";
@@ -21,6 +22,7 @@ import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
 import { Notification } from "@/util/Notification";
 import ResponsivePopover from "@/components/ResponsivePopover";
+import { useSystemStats } from "@/hooks/useSystemStats";
 
 const MIN_UNIX_MS_TIMESTAMP = 0;
 const DEFAULT_TOPICS_PER_PAGE = 12;
@@ -508,6 +510,8 @@ export default function LatestTopicsPage() {
     };
 
     const hasUnreadTopicOnCurrentPage = currentPageTopics.some(topic => !readTopics[topic.topicId]);
+    const shouldShowDataHint = !loading && currentPageTopics.length === 0;
+    const { stats: systemStats, loading: systemStatsLoading } = useSystemStats(shouldShowDataHint);
 
     const markCurrentPageAsRead = async () => {
         const unreadTopics = currentPageTopics.filter(topic => !readTopics[topic.topicId]);
@@ -673,6 +677,7 @@ export default function LatestTopicsPage() {
                         ) : (
                             <div className="text-center py-12">
                                 <p className="text-default-500">暂无话题数据，请调整筛选条件后重试</p>
+                                <RuntimeHint isLoading={systemStatsLoading} mode="data" stats={systemStats} />
                                 <Button
                                     className="mt-4"
                                     color="primary"

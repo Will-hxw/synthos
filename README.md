@@ -142,6 +142,8 @@ ollama pull bge-m3
 
 # 确认服务运行中
 curl http://localhost:11434
+ollama list
+curl http://localhost:11434/api/tags
 ```
 
 ### 4. 配置文件
@@ -281,7 +283,9 @@ bash run.sh
 
 ## 🐳 Docker 部署（不成熟）
 
-项目提供完整的 Docker Compose 编排，包含 MongoDB、后端服务、Nginx 前端，开箱即用。
+项目提供 Docker Compose 编排，包含 MongoDB、后端服务、Nginx 前端。
+
+> ⚠️ Docker 模式默认不会抓取 QQ 数据。`data-provider` 必须在宿主机单独启动，因为它需要访问宿主机 QQ NT 数据库和平台特定 VFS 插件。只执行 `docker compose up -d` 时，WebUI 可以打开，但不会自动导入新的 QQ 消息。
 
 ### 前置条件
 
@@ -304,6 +308,21 @@ docker compose up -d
 #    前端：http://localhost:8080
 #    后端 API：http://localhost:3002
 ```
+
+如需自动拉取 QQ 数据，请另开一个宿主机 PowerShell，在仓库根目录执行：
+
+```powershell
+$env:SYNTHOS_CONFIG_PATH="D:\path\to\synthos\docker\config\synthos_config.json"
+$env:SYNTHOS_MONGODB_URL="mongodb://localhost:27017/synthos"
+pnpm --filter data-provider dev
+```
+
+如果 WebUI 没有话题数据，优先检查：
+
+- 宿主机 `data-provider` 是否正在运行；
+- `docker/config/synthos_config.json` 是否配置了目标群号；
+- QQ `dbKey`、`dbBasePath`、`VFSExtPath` 是否指向宿主机真实路径；
+- 宿主机 `data-provider` 是否连接到了 Docker 暴露的 `mongodb://localhost:27017/synthos`。
 
 ### 使用内置 Ollama（可选）
 
@@ -337,7 +356,7 @@ docker exec -it synthos-ollama ollama pull bge-m3
 | `./docker/volumes/mongo/` | `/data/db` | MongoDB 数据 |
 | `./docker/volumes/ollama/` | `/root/.ollama` | Ollama 模型文件 |
 
-> ⚠️ `data-provider` 无法在容器中运行（需访问宿主机 QQ 桌面客户端本地数据库 + 平台特定 VFS 插件），请在宿主机通过 `pnpm --filter data-provider dev` 单独启动，并设置 `SYNTHOS_MONGODB_URL=mongodb://localhost:27017/synthos`。
+> ⚠️ `data-provider` 无法在容器中运行（需访问宿主机 QQ 桌面客户端本地数据库 + 平台特定 VFS 插件）。Docker Compose 中的 `data-provider` 只是 host-only 占位说明，真实抓取必须按上面的宿主机命令启动。
 
 ---
 
@@ -479,24 +498,53 @@ sudo systemctl start mongod
 ollama serve
 ```
 
+若语义搜索或 RAG 没有结果，还需要确认 embedding 模型已安装：
+
+```bash
+ollama list
+ollama pull bge-m3
+curl http://localhost:11434/api/tags
+```
+
 ### 端口被占用
 
 默认端口 `3011` / `3002` / `7979` 被占用时，修改 `synthos_config.json` 中对应端口即可。
 
-### `pnpm install` 失败（Windows）
+### Windows native 依赖安装失败排查
 
-`better-sqlite3` 等原生模块需要编译，确保已安装 Visual Studio Build Tools：
+`@journeyapps/sqlcipher`、`better-sqlite3`、`sqlite3` 等原生模块可能触发编译或 postinstall。Windows 上建议先确认以下环境：
 
 ```powershell
-# 推荐：安装 Visual Studio Build Tools
-# 下载：https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
-# 安装时勾选 "Desktop development with C++"
+node -v
+pnpm -v
+python --version
+npm config get msvs_version
 ```
 
-或通过命令行安装：
+推荐组合：
+
+- Node.js 22 LTS（如果 Node 24 安装 native 依赖失败，先切回 Node 22 LTS 复试）
+- pnpm 10.15.0
+- Python 3.11+
+- Visual Studio Build Tools 2022
+  - Desktop development with C++
+  - MSVC v143
+  - Windows 10/11 SDK
+
+常见处理：
+
+| 现象 | 处理 |
+|------|------|
+| `node-gyp` 找不到编译工具 | 安装 Visual Studio Build Tools 2022，并勾选 C++ 桌面开发、MSVC v143、Windows SDK |
+| 找不到 Python | 安装 Python 3.11+，必要时执行 `npm config set python <python.exe路径>` |
+| `@journeyapps/sqlcipher` postinstall 卡住或失败 | 优先切到 Node 22 LTS 后重新 `pnpm install` |
+| `better-sqlite3` bindings 缺失 | 重新执行 `pnpm install`，必要时再执行 `pnpm rebuild better-sqlite3` |
+| pnpm 提示构建脚本未批准 | 确认根目录 `pnpm-workspace.yaml` 的 `onlyBuiltDependencies`，必要时执行 `pnpm approve-builds` |
+
+注意：不要在子项目目录单独执行 `pnpm install`。新增或修复依赖后，应回到 monorepo 根目录执行。
 
 ```powershell
-npm config set python python3
+pnpm install
 ```
 
 ### `data-provider` 无法启动

@@ -12,6 +12,23 @@ interface OllamaEmbedResponse {
     embeddings: number[][];
 }
 
+interface OllamaTagModel {
+    name?: string;
+    model?: string;
+}
+
+interface OllamaTagsResponse {
+    models?: OllamaTagModel[];
+}
+
+export interface EmbeddingAvailability {
+    model: string;
+    ollamaReachable: boolean;
+    modelInstalled: boolean;
+    checkedAt: number;
+    error?: string;
+}
+
 @injectable()
 export class EmbeddingService {
     private client: AxiosInstance;
@@ -112,12 +129,58 @@ export class EmbeddingService {
      * @returns boolean
      */
     async isAvailable(): Promise<boolean> {
-        try {
-            await this.client.get("/api/tags");
+        const status = await this.getAvailability();
 
-            return true;
-        } catch {
-            return false;
+        return status.ollamaReachable && status.modelInstalled;
+    }
+
+    /**
+     * 检查 Ollama 服务和配置的 embedding 模型是否可用
+     */
+    async getAvailability(): Promise<EmbeddingAvailability> {
+        const checkedAt = Date.now();
+
+        try {
+            const response = await this.client.get<OllamaTagsResponse>("/api/tags");
+            const models = response.data.models ?? [];
+
+            return {
+                model: this.model,
+                ollamaReachable: true,
+                modelInstalled: this._hasConfiguredModel(models),
+                checkedAt
+            };
+        } catch (error) {
+            return {
+                model: this.model,
+                ollamaReachable: false,
+                modelInstalled: false,
+                checkedAt,
+                error: error instanceof Error ? error.message : String(error)
+            };
         }
+    }
+
+    private _hasConfiguredModel(models: OllamaTagModel[]): boolean {
+        const expectedModelNames = this._getConfiguredModelNames();
+
+        return models.some(model => {
+            const modelName = model.model || model.name || "";
+
+            return expectedModelNames.has(modelName);
+        });
+    }
+
+    private _getConfiguredModelNames(): Set<string> {
+        const names = new Set<string>([this.model]);
+        const latestSuffix = ":latest";
+
+        if (this.model.endsWith(latestSuffix)) {
+            names.add(this.model.slice(0, this.model.length - latestSuffix.length));
+        } else if (!this.model.includes(":")) {
+            names.add(`${this.model}${latestSuffix}`);
+        }
+
+        return names;
     }
 }

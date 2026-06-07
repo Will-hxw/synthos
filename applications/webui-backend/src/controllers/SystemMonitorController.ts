@@ -1,11 +1,12 @@
 import { Request, Response } from "express";
 import { injectable, inject } from "tsyringe";
 
+import { TOKENS } from "../di/tokens";
 import { SystemMonitorService } from "../services/SystemMonitorService";
 
 @injectable()
 export class SystemMonitorController {
-    constructor(@inject(SystemMonitorService) private systemMonitorService: SystemMonitorService) {}
+    constructor(@inject(TOKENS.SystemMonitorService) private systemMonitorService: SystemMonitorService) {}
 
     public getLatestStats = async (req: Request, res: Response): Promise<void> => {
         const stats = this.systemMonitorService.getLatestStats();

@@ -21,6 +21,17 @@ export const SearchResultItemSchema = z.object({
 
 export const SearchOutputSchema = z.array(SearchResultItemSchema);
 
+// ========== 运行状态接口 ==========
+
+export const EmbeddingRuntimeStatusSchema = z.object({
+    model: z.string(),
+    ollamaReachable: z.boolean(),
+    modelInstalled: z.boolean(),
+    vectorTopicCount: z.number().int().min(0),
+    checkedAt: z.number(),
+    error: z.string().optional()
+});
+
 // ========== RAG 问答接口 ==========
 
 export const AskInputSchema = z.object({
@@ -234,6 +245,7 @@ export const AgentGetMessagesOutputSchema = z.array(AgentMessageItemSchema);
 export type SearchInput = z.infer<typeof SearchInputSchema>;
 export type SearchResultItem = z.infer<typeof SearchResultItemSchema>;
 export type SearchOutput = z.infer<typeof SearchOutputSchema>;
+export type EmbeddingRuntimeStatus = z.infer<typeof EmbeddingRuntimeStatusSchema>;
 
 export type AskInput = z.infer<typeof AskInputSchema>;
 export type ReferenceItem = z.infer<typeof ReferenceItemSchema>;

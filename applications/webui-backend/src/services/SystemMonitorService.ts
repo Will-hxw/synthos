@@ -1,12 +1,15 @@
 import "reflect-metadata";
-import type { SystemStats } from "../types/system";
+import type { RAGClient } from "../rpc/aiModelClient";
+import type { SystemRuntimeStats, SystemStats } from "../types/system";
 
 import * as fs from "fs/promises";
 import * as path from "path";
 
-import { injectable } from "tsyringe";
+import { injectable, inject } from "tsyringe";
 import ConfigManagerService from "@root/common/services/config/ConfigManagerService";
 import Logger from "@root/common/util/Logger";
+
+import { TOKENS } from "../di/tokens";
 
 const LOGGER = Logger.withTag("SystemMonitorService");
 
@@ -17,7 +20,7 @@ export class SystemMonitorService {
     private collectionInterval: NodeJS.Timeout | null = null;
     private LOGGER = Logger.withTag("SystemMonitorService");
 
-    constructor() {
+    constructor(@inject(TOKENS.RAGClient) private ragClient: RAGClient) {
         this.startCollection();
     }
 
@@ -114,8 +117,26 @@ export class SystemMonitorService {
         return {
             timestamp,
             storage: storageStats,
-            modules: {}
+            modules: {},
+            runtime: await this._getRuntimeStats()
         };
+    }
+
+    private async _getRuntimeStats(): Promise<SystemRuntimeStats> {
+        try {
+            const embedding = await this.ragClient.runtimeStatus.query();
+
+            return {
+                aiModelReachable: true,
+                embedding
+            };
+        } catch (error) {
+            return {
+                aiModelReachable: false,
+                embedding: null,
+                error: error instanceof Error ? error.message : String(error)
+            };
+        }
     }
 
     private async getDirStats(dirPath: string): Promise<{ count: number; size: number }> {

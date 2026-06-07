@@ -195,13 +195,21 @@ describe("EmbeddingService", () => {
     });
 
     describe("isAvailable", () => {
-        it("should return true when Ollama service is available", async () => {
-            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [] } });
+        it("should return true when Ollama service and configured model are available", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ name: "bge-m3:latest" }] } });
 
             const result = await service.isAvailable();
 
             expect(result).toBe(true);
             expect(mockAxiosInstance.get).toHaveBeenCalledWith("/api/tags");
+        });
+
+        it("should return false when Ollama service is available but model is missing", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ name: "nomic-embed-text:latest" }] } });
+
+            const result = await service.isAvailable();
+
+            expect(result).toBe(false);
         });
 
         it("should return false when Ollama service is not available", async () => {
@@ -210,6 +218,46 @@ describe("EmbeddingService", () => {
             const result = await service.isAvailable();
 
             expect(result).toBe(false);
+        });
+    });
+
+    describe("getAvailability", () => {
+        it("should report installed configured model with latest tag", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ model: "bge-m3:latest" }] } });
+
+            const result = await service.getAvailability();
+
+            expect(result).toMatchObject({
+                model: TEST_MODEL,
+                ollamaReachable: true,
+                modelInstalled: true
+            });
+            expect(result.checkedAt).toEqual(expect.any(Number));
+        });
+
+        it("should report missing configured model", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ model: "other-model:latest" }] } });
+
+            const result = await service.getAvailability();
+
+            expect(result).toMatchObject({
+                model: TEST_MODEL,
+                ollamaReachable: true,
+                modelInstalled: false
+            });
+        });
+
+        it("should report unreachable Ollama service with error", async () => {
+            mockAxiosInstance.get.mockRejectedValueOnce(new Error("Connection refused"));
+
+            const result = await service.getAvailability();
+
+            expect(result).toMatchObject({
+                model: TEST_MODEL,
+                ollamaReachable: false,
+                modelInstalled: false,
+                error: "Connection refused"
+            });
         });
     });
 });

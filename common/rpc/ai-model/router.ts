@@ -8,6 +8,7 @@ import { observable } from "@trpc/server/observable";
 import {
     SearchInputSchema,
     SearchOutput,
+    EmbeddingRuntimeStatus,
     AskInputSchema,
     AskOutput,
     AskStreamChunkSchema,
@@ -51,6 +52,12 @@ export interface RAGRPCImplementation {
      * @returns 搜索结果列表
      */
     search(input: { query: string; limit: number }): Promise<SearchOutput>;
+
+    /**
+     * 获取 AI 模型运行状态
+     * @returns Embedding/Ollama/向量库运行状态
+     */
+    getRuntimeStatus(): Promise<EmbeddingRuntimeStatus>;
 
     /**
      * RAG 问答
@@ -161,6 +168,10 @@ export const createRAGRouter = (impl: RAGRPCImplementation) => {
             };
 
             return impl.search(validatedInput);
+        }),
+
+        runtimeStatus: t.procedure.query(async () => {
+            return impl.getRuntimeStatus();
         }),
 
         ask: t.procedure.input(AskInputSchema).query(async ({ input }) => {
