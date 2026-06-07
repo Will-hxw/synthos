@@ -106,6 +106,71 @@
 }
 ```
 
+### POST /api/setup-status/digest-coverage
+
+说明：只读诊断指定群组和时间范围内 `chat_messages -> sessionId -> ai_digest_sessions/ai_digest_results` 的覆盖情况。该接口不会触发补跑、不会修改 session 状态、不会清理任何数据。
+
+Body：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| groupId | string | 是 | 群组ID |
+| timeStart | number \| string | 是 | 起始时间戳（毫秒） |
+| timeEnd | number \| string | 是 | 结束时间戳（毫秒） |
+| detailLimit | number | 否 | 每类明细最多返回数量，默认 100，最大 200 |
+
+覆盖判定：
+
+- `ai_digest_sessions.status` 为 `success` 或 `empty` 时视为已覆盖。
+- 历史数据只要 `ai_digest_results` 中存在对应 `sessionId` 的话题行，也视为已覆盖。
+- `failed` 且 `updateTime` 未超过 stale 窗口归入近期失败。
+- `failed` 超过 stale 窗口，或 `processingStartedAt ?? updateTime` 超过 stale 窗口的 `processing`，归入已 stale。
+- 未命中终态、话题行、近期 failed 或近期 processing 的 session 归入未摘要。
+
+响应 `data`：
+
+```ts
+{
+  generatedAt: number;
+  groupId: string;
+  timeStart: number;
+  timeEnd: number;
+  staleWindowMs: number;
+  staleBefore: number;
+  detailLimit: number;
+  rawMessages: {
+    totalCount: number;
+    assignedCount: number;
+    unassignedCount: number;
+    timeStart: number | null;
+    timeEnd: number | null;
+  };
+  sessions: {
+    totalCount: number;
+    coveredCount: number;
+    pendingCount: number;
+    recentFailedCount: number;
+    staleCount: number;
+    recentProcessingCount: number;
+  };
+  unassignedMessages: {
+    count: number;
+    timeStart: number | null;
+    timeEnd: number | null;
+    items: Array<{
+      msgId: string;
+      timestamp: number;
+      senderId: string | null;
+      senderNickname: string | null;
+      messageContent: string | null;
+    }>;
+  };
+  pendingSessions: { count: number; items: DigestCoverageSessionDetail[] };
+  recentFailedSessions: { count: number; items: DigestCoverageSessionDetail[] };
+  staleSessions: { count: number; items: DigestCoverageSessionDetail[] };
+}
+```
+
 ---
 
 ## 4. 群组

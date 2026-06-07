@@ -123,6 +123,11 @@ export const setupApiRoutes = (app: Express): void => {
         asyncHandler((req, res) => setupStatusController.getSetupStatus(req, res))
     );
 
+    app.post(
+        "/api/setup-status/digest-coverage",
+        asyncHandler((req, res) => setupStatusController.getDigestCoverage(req, res))
+    );
+
     // ==================== 兴趣度评分 ====================
     // 获取兴趣度计算结果
     app.post(

@@ -17,6 +17,10 @@ export const siteConfig = {
             href: "/ai-chat"
         },
         {
+            label: "🧪漏总结诊断",
+            href: "/digest-diagnosis"
+        },
+        {
             label: "⚙️群组管理",
             href: "/groups"
         },
@@ -37,6 +41,10 @@ export const siteConfig = {
         {
             label: "🔍智能问答",
             href: "/ai-chat"
+        },
+        {
+            label: "🧪漏总结诊断",
+            href: "/digest-diagnosis"
         },
         {
             label: "⚙️群组管理",

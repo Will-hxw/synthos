@@ -130,6 +130,19 @@ export const CheckSessionSummarizedSchema = z.object({
 });
 export type CheckSessionSummarizedParams = z.infer<typeof CheckSessionSummarizedSchema>;
 
+export const GetDigestCoverageSchema = z
+    .object({
+        groupId: z.string({ message: "缺少groupId参数" }).min(1, "groupId不能为空"),
+        timeStart: UnixMsSchema,
+        timeEnd: UnixMsSchema,
+        detailLimit: z.number().int().positive().max(200).optional().default(100)
+    })
+    .refine(params => params.timeEnd >= params.timeStart, {
+        message: "timeEnd必须大于等于timeStart",
+        path: ["timeEnd"]
+    });
+export type GetDigestCoverageParams = z.infer<typeof GetDigestCoverageSchema>;
+
 // ==================== Interest Score ====================
 
 export const GetInterestScoreResultsSchema = z.object({

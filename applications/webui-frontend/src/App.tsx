@@ -9,6 +9,7 @@ const AIDigestPage = lazy(() => import("@/pages/ai-digest"));
 const GroupsPage = lazy(() => import("@/pages/groups"));
 const AiChatPage = lazy(() => import("@/pages/ai-chat/ai-chat"));
 const ConfigPage = lazy(() => import("@/pages/config-panel/config"));
+const DigestDiagnosisPage = lazy(() => import("@/pages/digest-diagnosis/digest-diagnosis"));
 
 function PageFallback() {
     return (
@@ -27,6 +28,7 @@ function App() {
                 <Route element={<AIDigestPage />} path="/ai-digest" />
                 <Route element={<GroupsPage />} path="/groups" />
                 <Route element={<LatestTopicsPage />} path="/latest-topics" />
+                <Route element={<DigestDiagnosisPage />} path="/digest-diagnosis" />
                 <Route element={<ReportsPage />} path="/reports" />
                 <Route element={<AiChatPage />} path="/ai-chat" />
                 <Route element={<Navigate replace to="/ai-chat" />} path="/rag" />

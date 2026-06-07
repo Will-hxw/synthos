@@ -29,6 +29,44 @@ export interface SessionStats {
     timeEnd: number;
 }
 
+export interface DigestCoverageRawMessageStats {
+    messageCount: number;
+    assignedMessageCount: number;
+    unassignedMessageCount: number;
+    assignedSessionCount: number;
+    timeStart: number | null;
+    timeEnd: number | null;
+    unassignedTimeStart: number | null;
+    unassignedTimeEnd: number | null;
+}
+
+export interface DigestCoverageSessionStats {
+    sessionId: string;
+    messageCount: number;
+    timeStart: number;
+    timeEnd: number;
+    status: string | null;
+    updateTime: number | null;
+    processingStartedAt: number | null;
+    failReason: string | null;
+    statusTopicCount: number | null;
+    resultTopicCount: number;
+}
+
+export interface DigestCoverageUnassignedMessageSample {
+    msgId: string;
+    timestamp: number;
+    senderId: string | null;
+    senderNickname: string | null;
+    messageContent: string | null;
+}
+
+export interface DigestCoverageSnapshot {
+    rawMessageStats: DigestCoverageRawMessageStats;
+    sessions: DigestCoverageSessionStats[];
+    unassignedMessageSamples: DigestCoverageUnassignedMessageSample[];
+}
+
 /**
  * IM 消息数据库访问服务
  * 负责聊天消息的存储和查询
@@ -441,6 +479,96 @@ export class ImDbAccessService extends Disposable {
              LIMIT ?`,
             [groupId, staleBefore, resolvedLimit]
         );
+    }
+
+    /**
+     * 获取指定群组和时间范围内消息到摘要状态的只读覆盖快照。
+     * @param groupId 群组ID
+     * @param timeStart 起始时间戳
+     * @param timeEnd 结束时间戳
+     * @param detailLimit 未分配消息样例数量上限
+     * @returns 原始消息统计、命中 session 摘要状态和未分配消息样例
+     */
+    public async getDigestCoverageSnapshotByGroupIdAndTimeRange(
+        groupId: string,
+        timeStart: number,
+        timeEnd: number,
+        detailLimit: number
+    ): Promise<DigestCoverageSnapshot> {
+        const resolvedLimit = Math.max(1, Math.floor(detailLimit));
+        const rawMessageStats = await this.db.get<DigestCoverageRawMessageStats>(
+            `SELECT
+                COUNT(*) AS messageCount,
+                COUNT(CASE WHEN sessionId IS NOT NULL THEN 1 END) AS assignedMessageCount,
+                COUNT(CASE WHEN sessionId IS NULL THEN 1 END) AS unassignedMessageCount,
+                COUNT(DISTINCT CASE WHEN sessionId IS NOT NULL THEN sessionId END) AS assignedSessionCount,
+                MIN(timestamp) AS timeStart,
+                MAX(timestamp) AS timeEnd,
+                MIN(CASE WHEN sessionId IS NULL THEN timestamp END) AS unassignedTimeStart,
+                MAX(CASE WHEN sessionId IS NULL THEN timestamp END) AS unassignedTimeEnd
+             FROM chat_messages
+             WHERE groupId = ? AND timestamp BETWEEN ? AND ?`,
+            [groupId, timeStart, timeEnd]
+        );
+        const sessions = await this.db.all<DigestCoverageSessionStats>(
+            `WITH range_sessions AS (
+                SELECT
+                    sessionId,
+                    COUNT(DISTINCT msgId) AS messageCount,
+                    MIN(timestamp) AS timeStart,
+                    MAX(timestamp) AS timeEnd
+                FROM chat_messages
+                WHERE groupId = ? AND timestamp BETWEEN ? AND ? AND sessionId IS NOT NULL
+                GROUP BY sessionId
+            ),
+            result_counts AS (
+                SELECT
+                    ar.sessionId AS sessionId,
+                    COUNT(DISTINCT ar.topicId) AS resultTopicCount
+                FROM ai_digest_results ar
+                INNER JOIN range_sessions rs ON rs.sessionId = ar.sessionId
+                GROUP BY ar.sessionId
+            )
+            SELECT
+                rs.sessionId AS sessionId,
+                rs.messageCount AS messageCount,
+                rs.timeStart AS timeStart,
+                rs.timeEnd AS timeEnd,
+                ds.status AS status,
+                ds.updateTime AS updateTime,
+                ds.processingStartedAt AS processingStartedAt,
+                ds.failReason AS failReason,
+                ds.topicCount AS statusTopicCount,
+                COALESCE(rc.resultTopicCount, 0) AS resultTopicCount
+            FROM range_sessions rs
+            LEFT JOIN ai_digest_sessions ds ON ds.sessionId = rs.sessionId
+            LEFT JOIN result_counts rc ON rc.sessionId = rs.sessionId
+            ORDER BY rs.timeEnd ASC, rs.sessionId ASC`,
+            [groupId, timeStart, timeEnd]
+        );
+        const unassignedMessageSamples = await this.db.all<DigestCoverageUnassignedMessageSample>(
+            `SELECT msgId, timestamp, senderId, senderNickname, messageContent
+             FROM chat_messages
+             WHERE groupId = ? AND timestamp BETWEEN ? AND ? AND sessionId IS NULL
+             ORDER BY timestamp ASC, msgId ASC
+             LIMIT ?`,
+            [groupId, timeStart, timeEnd, resolvedLimit]
+        );
+
+        return {
+            rawMessageStats: rawMessageStats ?? {
+                messageCount: 0,
+                assignedMessageCount: 0,
+                unassignedMessageCount: 0,
+                assignedSessionCount: 0,
+                timeStart: null,
+                timeEnd: null,
+                unassignedTimeStart: null,
+                unassignedTimeEnd: null
+            },
+            sessions,
+            unassignedMessageSamples
+        };
     }
 
     /**
