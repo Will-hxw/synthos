@@ -27,14 +27,22 @@
                 "apiKey": "replace-with-llm-api-key",
                 "baseURL": "https://api.example.com/v1",
                 "temperature": 0.7,
-                "maxTokens": 100000
+                "maxTokens": 100000,
+                "reasoning": {
+                    "enabled": false,
+                    "effort": "minimal"
+                }
             }
         },
         "defaultModelConfig": {
             "apiKey": "replace-with-llm-api-key",
             "baseURL": "https://api.example.com/v1",
             "temperature": 0.7,
-            "maxTokens": 100000
+            "maxTokens": 100000,
+            "reasoning": {
+                "enabled": false,
+                "effort": "minimal"
+            }
         },
         "defaultModelName": "example-model",
         "pinnedModels": ["example-model"],

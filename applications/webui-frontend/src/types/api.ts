@@ -21,6 +21,8 @@ export interface SuccessResponse<T> extends BaseResponse {
  */
 export interface ErrorResponse extends BaseResponse {
     message: string;
+    error?: string;
+    details?: unknown;
 }
 
 /**
@@ -30,4 +32,6 @@ export interface ApiResponse<T> {
     success: boolean;
     data: T;
     message: string;
+    error?: string;
+    details?: unknown;
 }

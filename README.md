@@ -42,7 +42,7 @@ run.bat
 bash run.sh
 ```
 
-启动后访问 **`http://localhost:3011`** 即可看到 WebUI。
+启动后访问 **`http://localhost:3011`** 即可看到 WebUI。若“最新话题”或“群组管理”为空，可查看空态中的启动状态提示，或直接访问后端诊断接口 **`http://localhost:3002/api/setup-status`**。
 
 ### 项目截图
 
@@ -126,6 +126,8 @@ corepack enable
 corepack prepare pnpm@10.15.0 --activate
 ```
 
+本项目包含 `better-sqlite3`、`@journeyapps/sqlcipher`、`sqlite-vec` 等原生依赖。请始终在仓库根目录使用 `pnpm install` 或 `pnpm install --frozen-lockfile` 安装依赖，不要在子项目目录执行安装命令。
+
 ### 2. 安装 MongoDB
 
 下载并安装 [MongoDB Community Edition](https://www.mongodb.com/try/download/community)，确保服务运行在 `localhost:27017`。
@@ -142,6 +144,8 @@ ollama pull bge-m3
 
 # 确认服务运行中
 curl http://localhost:11434
+
+# 确认模型已安装
 ollama list
 curl http://localhost:11434/api/tags
 ```
@@ -155,7 +159,7 @@ cp synthos_config.example.json synthos_config.json
 ```
 完整字段格式参考：[`common/services/config/schemas/GlobalConfig.ts`](./common/services/config/schemas/GlobalConfig.ts)。
 
-> 你也可以使用 **配置面板**（`pnpm dev:config`）在 WebUI 中可视化编辑配置，无需手动编辑 JSON。
+> **配置面板不会自动创建主配置文件。** 首次使用仍需先复制 `synthos_config.example.json`。如果 `synthos_config.json` 缺失、JSON 格式错误或模型引用无效，配置面板会显示明确错误；修复后可继续使用 `pnpm dev:config` 可视化编辑。
 
 ### 5. 配置 LLM 模型
 
@@ -169,7 +173,11 @@ cp synthos_config.example.json synthos_config.json
         "apiKey": "sk-your-api-key-here",
         "baseURL": "https://api.openai.com/v1",
         "temperature": 0.7,
-        "maxTokens": 100000
+        "maxTokens": 100000,
+        "reasoning": {
+          "enabled": false,
+          "effort": "minimal"
+        }
       }
     },
     "defaultModelName": "my-model",
@@ -178,13 +186,17 @@ cp synthos_config.example.json synthos_config.json
       "apiKey": "sk-your-api-key-here",
       "baseURL": "https://api.openai.com/v1",
       "temperature": 0.7,
-      "maxTokens": 100000
+      "maxTokens": 100000,
+      "reasoning": {
+        "enabled": false,
+        "effort": "minimal"
+      }
     }
   }
 }
 ```
 
-> 兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。
+> 兼容任何 OpenAI 兼容 API（DeepSeek、MIMO、通义千问、GLM 等），只需修改 `baseURL` 和 `apiKey`。`reasoning.enabled` 默认关闭；只有确认上游模型支持对应参数时才开启。
 
 ### 6. 配置 QQ 数据源
 
@@ -345,6 +357,8 @@ docker exec -it synthos-ollama ollama pull bge-m3
 | WebUI Backend | `synthos-webui-backend` | `3002` |
 | WebUI Frontend (Nginx) | `synthos-webui-frontend` | `8080` |
 | Ollama（需 `--profile ollama`） | `synthos-ollama` | `11434` |
+
+> Docker 部署仍受 `data-provider` 的宿主机约束影响：QQ NT 数据库目录、数据库密钥和 SQLite VFS 原生扩展必须来自宿主机环境。仅部署 WebUI、后端、AI Model 和 MongoDB 不会自动产生 QQ 聊天数据；需要确认 `dataProviders.QQ.dbBasePath`、`VFSExtPath` 和挂载路径都指向真实可读位置。
 
 ### 数据持久化
 

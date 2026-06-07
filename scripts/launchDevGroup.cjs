@@ -19,27 +19,27 @@ function parseArgs(argv) {
 function buildConcurrentlyArgs(group) {
     if (group === "all") {
         return {
-            names: "orchestrator,preprocessing,ai-model,data-provider,backend,frontend",
+            names: "preprocessing,ai-model,data-provider,backend,frontend,orchestrator",
             commands: [
-                "pnpm --filter orchestrator dev",
                 "pnpm --filter preprocessing dev",
                 "pnpm --filter ai-model dev",
                 "pnpm --filter data-provider dev",
                 "pnpm --filter webui-backend dev",
-                "pnpm --filter vite-template dev"
+                "pnpm --filter vite-template dev",
+                "pnpm --filter orchestrator dev"
             ]
         };
     }
 
     if (group === "backend") {
         return {
-            names: "orchestrator,preprocessing,ai-model,data-provider,backend",
+            names: "preprocessing,ai-model,data-provider,backend,orchestrator",
             commands: [
-                "pnpm --filter orchestrator dev",
                 "pnpm --filter preprocessing dev",
                 "pnpm --filter ai-model dev",
                 "pnpm --filter data-provider dev",
-                "pnpm --filter webui-backend dev"
+                "pnpm --filter webui-backend dev",
+                "pnpm --filter orchestrator dev"
             ]
         };
     }
@@ -67,30 +67,30 @@ function buildConcurrentlyArgs(group) {
 
     if (group === "forwarder") {
         return {
-            names: "orchestrator,preprocessing,ai-model,data-provider,backend,frontend,forwarder",
+            names: "preprocessing,ai-model,data-provider,backend,frontend,forwarder,orchestrator",
             commands: [
-                "pnpm --filter orchestrator dev",
                 "pnpm --filter preprocessing dev",
                 "pnpm --filter ai-model dev",
                 "pnpm --filter data-provider dev",
                 "pnpm --filter webui-backend dev",
                 "pnpm --filter vite-template dev",
-                "pnpm --filter webui-forwarder dev"
+                "pnpm --filter webui-forwarder dev",
+                "pnpm --filter orchestrator dev"
             ]
         };
     }
 
     if (group === "public-preview") {
         return {
-            names: "orchestrator,preprocessing,ai-model,data-provider,backend,frontend-preview,public-tunnel",
+            names: "preprocessing,ai-model,data-provider,backend,frontend-preview,public-tunnel,orchestrator",
             commands: [
-                "pnpm --filter orchestrator dev",
                 "pnpm --filter preprocessing dev",
                 "pnpm --filter ai-model dev",
                 "pnpm --filter data-provider dev",
                 "pnpm --filter webui-backend dev",
                 "pnpm --filter vite-template build && node scripts/startPublicPreviewServer.cjs",
-                "node scripts/runWithEnv.cjs SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT=3012 -- node scripts/startPublicTunnel.cjs"
+                "node scripts/runWithEnv.cjs SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT=3012 -- node scripts/startPublicTunnel.cjs",
+                "pnpm --filter orchestrator dev"
             ]
         };
     }

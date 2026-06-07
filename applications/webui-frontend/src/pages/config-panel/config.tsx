@@ -27,6 +27,27 @@ import { Notification } from "@/util/Notification";
 const DiffEditor = lazy(() => import("@monaco-editor/react").then(module => ({ default: module.DiffEditor })));
 const CONFIG_SAVE_RESTART_NOTICE = "配置已保存。请重启相关服务后生效。";
 
+interface LoadErrorState {
+    title: string;
+    details: string[];
+}
+
+const normalizeApiFailure = (response: { message?: string; error?: string; details?: unknown }, fallbackTitle: string): LoadErrorState => {
+    const details = Array.isArray(response.details) ? response.details.map(detail => String(detail)) : response.details ? [String(response.details)] : [];
+
+    return {
+        title: response.message || response.error || fallbackTitle,
+        details
+    };
+};
+
+const normalizeUnknownError = (error: unknown, fallbackTitle: string): LoadErrorState => {
+    return {
+        title: fallbackTitle,
+        details: [error instanceof Error ? error.message : String(error)]
+    };
+};
+
 /**
  * 将后端返回的校验错误归一化为 { path, message } 结构。
  *
@@ -156,6 +177,7 @@ export default function ConfigPage() {
     const { theme } = useTheme();
     const [config, setConfig] = useState<Record<string, unknown>>({});
     const [schema, setSchema] = useState<JsonSchema | null>(null);
+    const [loadError, setLoadError] = useState<LoadErrorState | null>(null);
 
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -289,23 +311,29 @@ export default function ConfigPage() {
     // 加载配置 + schema
     const loadAll = useCallback(async () => {
         setIsLoading(true);
+        setLoadError(null);
 
         try {
-            const [configResponse, schemaResponse] = await Promise.all([getCurrentConfig(), getConfigSchema()]);
-
-            if (configResponse.success) {
-                setConfig(configResponse.data);
-            } else {
-                console.error("获取配置失败:", configResponse.message);
-            }
+            const [schemaResponse, configResponse] = await Promise.all([getConfigSchema(), getCurrentConfig()]);
+            let nextLoadError: LoadErrorState | null = null;
 
             if (schemaResponse.success) {
                 setSchema(schemaResponse.data);
             } else {
-                console.error("获取 Schema 失败:", schemaResponse.message);
+                nextLoadError = normalizeApiFailure(schemaResponse, "配置 Schema 加载失败");
+                setSchema(null);
             }
+
+            if (configResponse.success) {
+                setConfig(configResponse.data);
+            } else {
+                nextLoadError = normalizeApiFailure(configResponse, "配置加载失败");
+            }
+
+            setLoadError(nextLoadError);
         } catch (error) {
             console.error("加载配置面板数据失败:", error);
+            setLoadError(normalizeUnknownError(error, "配置面板数据加载失败"));
         } finally {
             setIsLoading(false);
         }
@@ -553,6 +581,37 @@ export default function ConfigPage() {
                 <div className="flex justify-center items-center h-[60vh]">
                     <Spinner label="加载配置中..." size="lg" />
                 </div>
+            </DefaultLayout>
+        );
+    }
+
+    if (loadError) {
+        return (
+            <DefaultLayout>
+                <section className="flex min-h-[60vh] items-center justify-center px-3 py-6 sm:px-0 md:py-10">
+                    <div className="flex w-full max-w-3xl flex-col gap-4 rounded-lg border border-danger-200 bg-danger-50 p-5 text-danger-900 dark:border-danger-900/60 dark:bg-danger-950/30 dark:text-danger-100">
+                        <div className="flex items-start gap-3">
+                            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                            <div className="min-w-0 space-y-2">
+                                <h1 className="text-lg font-semibold">{loadError.title}</h1>
+                                {loadError.details.length > 0 && (
+                                    <div className="space-y-1 text-sm">
+                                        {loadError.details.map((detail, index) => (
+                                            <p key={`${detail}-${index}`} className="break-words">
+                                                {detail}
+                                            </p>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div>
+                            <Button color="danger" size="sm" startContent={<RotateCcw className="h-4 w-4" />} variant="flat" onPress={loadAll}>
+                                重新加载
+                            </Button>
+                        </div>
+                    </div>
+                </section>
             </DefaultLayout>
         );
     }

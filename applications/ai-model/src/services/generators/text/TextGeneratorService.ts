@@ -1,4 +1,6 @@
 import "reflect-metadata";
+import type { GlobalConfig, ModelConfig } from "@root/common/services/config/schemas/GlobalConfig";
+
 import { appendFile, mkdir } from "fs/promises";
 import { join } from "path";
 
@@ -42,6 +44,8 @@ interface JsonFailureRecord {
     groupId?: string;
     sessionId?: string;
 }
+
+type ChatOpenAIConstructorOptions = ConstructorParameters<typeof ChatOpenAI>[0];
 
 class JsonRepairFailureError extends Error {
     public constructor(
@@ -89,23 +93,51 @@ export class TextGeneratorService extends Disposable {
         // 可选：预加载默认模型，或留空由 useModel 懒加载
     }
 
+    /**
+     * 获取指定模型配置，未单独配置时回退到默认模型配置。
+     */
+    private _getModelConfig(config: GlobalConfig, modelName: string): ModelConfig {
+        return config.ai.models[modelName] ?? config.ai.defaultModelConfig;
+    }
+
+    /**
+     * 统一组装 ChatOpenAI 参数，仅在模型显式启用时透传 reasoning。
+     */
+    private _buildChatOpenAIOptions(
+        config: GlobalConfig,
+        modelName: string,
+        temperature?: number,
+        maxTokens?: number
+    ): ChatOpenAIConstructorOptions {
+        const modelConfig = this._getModelConfig(config, modelName);
+        const options: ChatOpenAIConstructorOptions = {
+            openAIApiKey: modelConfig.apiKey,
+            apiKey: modelConfig.apiKey,
+            configuration: {
+                baseURL: modelConfig.baseURL
+            },
+            model: modelName,
+            temperature: temperature ?? modelConfig.temperature,
+            maxTokens: maxTokens ?? modelConfig.maxTokens
+        };
+
+        if (!modelConfig.reasoning.enabled) {
+            return options;
+        }
+
+        return {
+            ...options,
+            reasoning: {
+                effort: modelConfig.reasoning.effort
+            }
+        };
+    }
+
     private async useModel(modelName: string) {
         // 懒加载：当需要使用某个模型时才创建实例
         if (!this.models.has(modelName)) {
             const config = await this.configManagerService.getCurrentConfig();
-            const chatModel = new ChatOpenAI({
-                openAIApiKey: config.ai?.models[modelName]?.apiKey ?? config.ai.defaultModelConfig.apiKey, // 从配置中获取 API Key
-                apiKey: config.ai?.models[modelName]?.apiKey ?? config.ai.defaultModelConfig.apiKey, // 从配置中获取 API Key
-                configuration: {
-                    baseURL: config.ai?.models[modelName]?.baseURL ?? config.ai.defaultModelConfig.baseURL // 支持自定义 base URL
-                },
-                model: modelName,
-                temperature: config.ai?.models[modelName]?.temperature ?? config.ai.defaultModelConfig.temperature,
-                maxTokens: config.ai?.models[modelName]?.maxTokens ?? config.ai.defaultModelConfig.maxTokens,
-                reasoning: {
-                    effort: "minimal" // 默认不思考
-                }
-            });
+            const chatModel = new ChatOpenAI(this._buildChatOpenAIOptions(config, modelName));
 
             this.models.set(modelName, chatModel);
             this.LOGGER.info(`Model ${modelName} 成功加载.`);
@@ -761,23 +793,7 @@ export class TextGeneratorService extends Disposable {
         const config = await this.configManagerService.getCurrentConfig();
 
         // 创建新的 ChatOpenAI 实例（不缓存，因为参数可能不同）
-        const chatModel = new ChatOpenAI({
-            openAIApiKey: config.ai?.models[modelName]?.apiKey ?? config.ai.defaultModelConfig.apiKey,
-            apiKey: config.ai?.models[modelName]?.apiKey ?? config.ai.defaultModelConfig.apiKey,
-            configuration: {
-                baseURL: config.ai?.models[modelName]?.baseURL ?? config.ai.defaultModelConfig.baseURL
-            },
-            model: modelName,
-            temperature:
-                temperature ??
-                config.ai?.models[modelName]?.temperature ??
-                config.ai.defaultModelConfig.temperature,
-            maxTokens:
-                maxTokens ?? config.ai?.models[modelName]?.maxTokens ?? config.ai.defaultModelConfig.maxTokens,
-            reasoning: {
-                effort: "minimal"
-            }
-        });
+        const chatModel = new ChatOpenAI(this._buildChatOpenAIOptions(config, modelName, temperature, maxTokens));
 
         this.LOGGER.info(`为 Agent 场景创建独立的 ChatOpenAI 实例: ${modelName}`);
 
@@ -812,25 +828,9 @@ export class TextGeneratorService extends Disposable {
         this.LOGGER.info(`Agent 使用模型: ${effectiveModelName}`);
 
         // 创建独立的模型实例
-        let chatModel = new ChatOpenAI({
-            openAIApiKey: config.ai?.models[effectiveModelName]?.apiKey ?? config.ai.defaultModelConfig.apiKey,
-            apiKey: config.ai?.models[effectiveModelName]?.apiKey ?? config.ai.defaultModelConfig.apiKey,
-            configuration: {
-                baseURL: config.ai?.models[effectiveModelName]?.baseURL ?? config.ai.defaultModelConfig.baseURL
-            },
-            model: effectiveModelName,
-            temperature:
-                temperature ??
-                config.ai?.models[effectiveModelName]?.temperature ??
-                config.ai.defaultModelConfig.temperature,
-            maxTokens:
-                maxTokens ??
-                config.ai?.models[effectiveModelName]?.maxTokens ??
-                config.ai.defaultModelConfig.maxTokens,
-            reasoning: {
-                effort: "minimal"
-            }
-        });
+        let chatModel = new ChatOpenAI(
+            this._buildChatOpenAIOptions(config, effectiveModelName, temperature, maxTokens)
+        );
 
         // 如果提供了工具，绑定工具并返回流
         if (tools && tools.length > 0) {

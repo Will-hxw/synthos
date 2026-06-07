@@ -23,6 +23,7 @@ import DefaultLayout from "@/layouts/default";
 import { Notification } from "@/util/Notification";
 import ResponsivePopover from "@/components/ResponsivePopover";
 import { useSystemStats } from "@/hooks/useSystemStats";
+import SetupStatusNotice from "@/components/setup/SetupStatusNotice";
 
 const MIN_UNIX_MS_TIMESTAMP = 0;
 const DEFAULT_TOPICS_PER_PAGE = 12;
@@ -678,6 +679,7 @@ export default function LatestTopicsPage() {
                             <div className="text-center py-12">
                                 <p className="text-default-500">暂无话题数据，请调整筛选条件后重试</p>
                                 <RuntimeHint isLoading={systemStatsLoading} mode="data" stats={systemStats} />
+                                <SetupStatusNotice className="mx-auto mt-4 max-w-3xl" />
                                 <Button
                                     className="mt-4"
                                     color="primary"

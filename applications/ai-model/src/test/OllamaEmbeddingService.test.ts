@@ -195,8 +195,12 @@ describe("EmbeddingService", () => {
     });
 
     describe("isAvailable", () => {
-        it("should return true when Ollama service and configured model are available", async () => {
-            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ name: "bge-m3:latest" }] } });
+        it("模型已安装时返回 true", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({
+                data: {
+                    models: [{ name: `${TEST_MODEL}:latest` }]
+                }
+            });
 
             const result = await service.isAvailable();
 
@@ -204,15 +208,19 @@ describe("EmbeddingService", () => {
             expect(mockAxiosInstance.get).toHaveBeenCalledWith("/api/tags");
         });
 
-        it("should return false when Ollama service is available but model is missing", async () => {
-            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ name: "nomic-embed-text:latest" }] } });
+        it("模型缺失时返回 false", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({
+                data: {
+                    models: [{ name: "nomic-embed-text:latest" }]
+                }
+            });
 
             const result = await service.isAvailable();
 
             expect(result).toBe(false);
         });
 
-        it("should return false when Ollama service is not available", async () => {
+        it("服务不可用时返回 false", async () => {
             mockAxiosInstance.get.mockRejectedValueOnce(new Error("Connection refused"));
 
             const result = await service.isAvailable();
@@ -222,8 +230,12 @@ describe("EmbeddingService", () => {
     });
 
     describe("getAvailability", () => {
-        it("should report installed configured model with latest tag", async () => {
-            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ model: "bge-m3:latest" }] } });
+        it("模型带 latest 标签时应返回已安装状态", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({
+                data: {
+                    models: [{ model: `${TEST_MODEL}:latest` }]
+                }
+            });
 
             const result = await service.getAvailability();
 
@@ -235,19 +247,25 @@ describe("EmbeddingService", () => {
             expect(result.checkedAt).toEqual(expect.any(Number));
         });
 
-        it("should report missing configured model", async () => {
-            mockAxiosInstance.get.mockResolvedValueOnce({ data: { models: [{ model: "other-model:latest" }] } });
+        it("模型缺失时返回明确状态", async () => {
+            mockAxiosInstance.get.mockResolvedValueOnce({
+                data: {
+                    models: []
+                }
+            });
 
             const result = await service.getAvailability();
 
-            expect(result).toMatchObject({
+            expect(result).toEqual({
                 model: TEST_MODEL,
                 ollamaReachable: true,
-                modelInstalled: false
+                modelInstalled: false,
+                checkedAt: expect.any(Number),
+                error: `未在 Ollama 中找到 embedding 模型 ${TEST_MODEL}`
             });
         });
 
-        it("should report unreachable Ollama service with error", async () => {
+        it("服务不可用时返回错误状态", async () => {
             mockAxiosInstance.get.mockRejectedValueOnce(new Error("Connection refused"));
 
             const result = await service.getAvailability();
@@ -258,6 +276,7 @@ describe("EmbeddingService", () => {
                 modelInstalled: false,
                 error: "Connection refused"
             });
+            expect(result.checkedAt).toEqual(expect.any(Number));
         });
     });
 });

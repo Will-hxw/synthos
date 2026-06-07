@@ -12,6 +12,7 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 import { getGroupDetails, getMessageHourlyStats } from "@/api/basicApi";
 import { title } from "@/components/primitives";
 import DefaultLayout from "@/layouts/default";
+import SetupStatusNotice from "@/components/setup/SetupStatusNotice";
 
 interface HourlyTrend {
     current: number[];
@@ -427,12 +428,8 @@ export default function GroupsPage() {
                                                     {renderStatsChange(totalRecentMessageCount, totalPreviousMessageCount)}
                                                 </div>
                                             </TableCell>
-                                            <TableCell>
-                                                {renderCountValue(totalPreviousMessageCount)}
-                                            </TableCell>
-                                            <TableCell>
-                                                {renderTrendChart(totalHourlyTrend.current, totalHourlyTrend.previous)}
-                                            </TableCell>
+                                            <TableCell>{renderCountValue(totalPreviousMessageCount)}</TableCell>
+                                            <TableCell>{renderTrendChart(totalHourlyTrend.current, totalHourlyTrend.previous)}</TableCell>
                                         </TableRow>
                                         {/* 群组数据行 - 根据排序描述符排序 */}
                                         {sortedGroupList.map(({ groupId, groupDetail, messageCount, previousMessageCount }) => (
@@ -474,18 +471,15 @@ export default function GroupsPage() {
                                                         {renderStatsChange(messageCount, previousMessageCount)}
                                                     </div>
                                                 </TableCell>
-                                                <TableCell>
-                                                    {renderCountValue(previousMessageCount)}
-                                                </TableCell>
-                                                <TableCell>
-                                                    {renderTrendChart(groupHourlyTrends[groupId]?.current ?? [], groupHourlyTrends[groupId]?.previous ?? [])}
-                                                </TableCell>
+                                                <TableCell>{renderCountValue(previousMessageCount)}</TableCell>
+                                                <TableCell>{renderTrendChart(groupHourlyTrends[groupId]?.current ?? [], groupHourlyTrends[groupId]?.previous ?? [])}</TableCell>
                                             </TableRow>
                                         ))}
                                     </>
                                 </TableBody>
                             </Table>
                         )}
+                        {!isGroupsLoading && Object.keys(groups).length === 0 && <SetupStatusNotice className="mt-4" />}
                     </CardBody>
                 </Card>
 

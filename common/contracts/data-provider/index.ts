@@ -19,6 +19,9 @@ export interface ProcessedChatMessage {
 
 export type ProcessedChatMessageWithRawMessage = RawChatMessage & ProcessedChatMessage;
 
+export { QQ_SOURCE_RECONCILE_STATUS_PREFIX } from "./QQSourceReconcileStatus";
+export type { QQSourceReconcileCursorSnapshot, QQSourceReconcileStatus } from "./QQSourceReconcileStatus";
+
 // IM类型
 export enum IMTypes {
     QQ = "QQ",

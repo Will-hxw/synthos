@@ -20,6 +20,7 @@ import { ReportController } from "../controllers/ReportController";
 import { SystemMonitorController } from "../controllers/SystemMonitorController";
 import { AgentController } from "../controllers/AgentController";
 import { LogsController } from "../controllers/LogsController";
+import { SetupStatusController } from "../controllers/SetupStatusController";
 
 export const setupApiRoutes = (app: Express): void => {
     // 获取 controller 实例
@@ -37,6 +38,7 @@ export const setupApiRoutes = (app: Express): void => {
     const systemMonitorController = container.resolve<SystemMonitorController>(TOKENS.SystemMonitorController);
     const agentController = container.resolve<AgentController>(TOKENS.AgentController);
     const logsController = container.resolve<LogsController>(TOKENS.LogsController);
+    const setupStatusController = container.resolve<SetupStatusController>(TOKENS.SetupStatusController);
 
     // ==================== 群组 ====================
     // 获取所有群组详情
@@ -115,6 +117,11 @@ export const setupApiRoutes = (app: Express): void => {
 
     // 健康检查
     app.get("/health", (req, res) => miscController.healthCheck(req, res));
+
+    app.get(
+        "/api/setup-status",
+        asyncHandler((req, res) => setupStatusController.getSetupStatus(req, res))
+    );
 
     // ==================== 兴趣度评分 ====================
     // 获取兴趣度计算结果

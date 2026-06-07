@@ -14,13 +14,13 @@ const { runPreStartCommand, stopPreStartCommand } = require("./preStartCommand.c
 // 构建顺序配置（可按需调整）
 // 注意：orchestrator 需要在所有任务处理器启动后再启动，以确保任务已注册
 const buildOrder = [
-    "orchestrator", // Pipeline 调度器，需要先启动
     "preprocessing",
     "ai-model",
     "webui-backend",
     "webui-frontend",
     // 'webui-forwarder', // TODO 目前无法正常启动，待解决
-    "data-provider"
+    "data-provider",
+    "orchestrator"
 ];
 
 // 项目根目录

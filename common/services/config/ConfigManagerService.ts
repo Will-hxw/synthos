@@ -7,11 +7,16 @@ import { dirname, isAbsolute, join, resolve } from "path";
 import { injectable } from "tsyringe";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
-import { ASSERT } from "../../util/ASSERT";
 import { findFileUpwards } from "../../util/file/findFileUpwards";
 import { deepMerge } from "../../util/core/deepMerge";
 
-import { GlobalConfig, GlobalConfigSchema, PartialGlobalConfig } from "./schemas/GlobalConfig";
+import {
+    GlobalConfig,
+    GlobalConfigObjectSchema,
+    GlobalConfigSchema,
+    PartialGlobalConfig,
+    PartialGlobalConfigSchema
+} from "./schemas/GlobalConfig";
 
 interface LoadedConfig {
     configPath: string;
@@ -79,9 +84,13 @@ class ConfigManagerService {
      * 读取并校验主配置与 override 合并后的配置。
      */
     private async _loadCurrentConfig(): Promise<LoadedConfig> {
-        const configPath = await this.configPath;
+        const configPath = await this.getConfigPath();
 
-        ASSERT(configPath, "未找到配置文件");
+        if (!configPath) {
+            throw new Error(
+                "未找到配置文件 synthos_config.json。请在项目根目录创建配置文件，或设置 SYNTHOS_CONFIG_PATH 指向有效配置文件。"
+            );
+        }
 
         // 1. 读取主配置
         const configContent = await readFile(configPath, "utf8");
@@ -159,11 +168,12 @@ class ConfigManagerService {
     public async saveOverrideConfig(config: PartialGlobalConfig): Promise<void> {
         const overridePath = await this.getOverridePath();
 
-        ASSERT(overridePath, "无法确定 override 配置文件路径");
+        if (!overridePath) {
+            throw new Error("无法确定 override 配置文件路径。请先创建主配置文件 synthos_config.json。");
+        }
 
         // 验证配置格式
-        const partialSchema = GlobalConfigSchema.deepPartial();
-        const validationResult = partialSchema.safeParse(config);
+        const validationResult = PartialGlobalConfigSchema.safeParse(config);
 
         if (!validationResult.success) {
             throw new Error(`配置验证失败: ${validationResult.error.message}`);
@@ -179,7 +189,11 @@ class ConfigManagerService {
     public async saveBaseConfig(config: GlobalConfig): Promise<void> {
         const configPath = await this.getConfigPath();
 
-        ASSERT(configPath, "无法确定基础配置文件路径");
+        if (!configPath) {
+            throw new Error(
+                "无法确定基础配置文件路径。请先创建主配置文件 synthos_config.json，或设置 SYNTHOS_CONFIG_PATH。"
+            );
+        }
 
         // 验证配置格式（全量验证）
         const validationResult = GlobalConfigSchema.safeParse(config);
@@ -198,7 +212,7 @@ class ConfigManagerService {
      * 用于前端动态生成表单和验证
      */
     public getConfigJsonSchema(): JsonSchema7Type {
-        return zodToJsonSchema(GlobalConfigSchema, {
+        return zodToJsonSchema(GlobalConfigObjectSchema, {
             name: "GlobalConfig",
             $refStrategy: "none" // 展开所有引用，方便前端使用
         });
@@ -228,8 +242,7 @@ class ConfigManagerService {
      * @returns 验证结果
      */
     public validatePartialConfig(config: unknown): { success: true } | { success: false; errors: string[] } {
-        const partialSchema = GlobalConfigSchema.deepPartial();
-        const result = partialSchema.safeParse(config);
+        const result = PartialGlobalConfigSchema.safeParse(config);
 
         if (result.success) {
             return { success: true };

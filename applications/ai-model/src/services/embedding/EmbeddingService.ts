@@ -142,13 +142,15 @@ export class EmbeddingService {
 
         try {
             const response = await this.client.get<OllamaTagsResponse>("/api/tags");
-            const models = response.data.models ?? [];
+            const models = Array.isArray(response.data.models) ? response.data.models : [];
+            const modelInstalled = this._hasConfiguredModel(models);
 
             return {
                 model: this.model,
                 ollamaReachable: true,
-                modelInstalled: this._hasConfiguredModel(models),
-                checkedAt
+                modelInstalled,
+                checkedAt,
+                error: modelInstalled ? undefined : `未在 Ollama 中找到 embedding 模型 ${this.model}`
             };
         } catch (error) {
             return {

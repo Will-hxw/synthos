@@ -2,6 +2,21 @@
 
 > 范围：只考虑功能正确性、性能效率、结果准确度和交互体验问题。安全、权限、泄露、敏感信息、成本控制类问题不纳入。
 
+## 2026-06-07 修复状态
+
+本报告中的真实问题已按当前决策完成修复：
+
+1. Node v24.5.0 保留；已补充原生依赖安装说明，并通过本机 `pnpm install --frozen-lockfile` 与完整应用构建验证。
+2. 配置面板不自动创建主配置；缺少 `synthos_config.json`、JSON 无效或模型引用无效时返回并展示明确错误。
+3. `ai.models`、`ai.defaultModelName`、`ai.pinnedModels`、`groupConfigs.*.aiModels`、`report.generation.aiModels` 已加入交叉校验。
+4. `reasoning` 默认关闭，只有模型配置显式启用时才透传给 `ChatOpenAI`。
+5. QQ 原库对账会写入最近扫描状态，WebUI 新增 `/api/setup-status` 与空态提示。
+6. 启动脚本已把 orchestrator 放到 worker 后面，orchestrator 启动时会等待 Pipeline worker 注册完成。
+7. Ollama embedding 检查已从“服务可达”升级为“服务可达且配置模型存在”。
+8. README、示例配置与 API 文档已同步更新。
+
+下文保留原始审查内容，作为问题来源和证据记录。
+
 ## 总体判断
 
 这个项目目前对作者本人本地环境是可用的，但对“别人 clone 后直接跑起来”仍有几类高风险问题：

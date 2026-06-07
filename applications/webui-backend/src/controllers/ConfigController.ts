@@ -29,9 +29,13 @@ export class ConfigController {
      * 获取当前合并后的配置
      */
     async getCurrentConfig(_req: Request, res: Response): Promise<void> {
-        const config = await this.configService.getCurrentConfig();
+        try {
+            const config = await this.configService.getCurrentConfig();
 
-        res.json({ success: true, data: config });
+            res.json({ success: true, data: config });
+        } catch (error) {
+            this._sendConfigError(res, 400, "配置加载失败", error);
+        }
     }
 
     /**
@@ -42,7 +46,7 @@ export class ConfigController {
         const config = await this.configService.getBaseConfig();
 
         if (config === null) {
-            res.status(404).json({ success: false, error: "基础配置文件不存在" });
+            res.status(404).json({ success: false, message: "基础配置文件不存在" });
 
             return;
         }
@@ -59,8 +63,8 @@ export class ConfigController {
         try {
             await this.configService.saveBaseConfig(config);
             res.json({ success: true, message: CONFIG_SAVE_RESTART_NOTICE });
-        } catch (error: any) {
-            res.status(400).json({ success: false, error: error.message });
+        } catch (error) {
+            this._sendConfigError(res, 400, "基础配置保存失败", error);
         }
     }
 
@@ -89,18 +93,22 @@ export class ConfigController {
             // TODO 复用src/errors下的公共错误
             res.status(400).json({
                 success: false,
-                error: "配置验证失败",
+                message: "配置验证失败",
                 details: validationResult.errors
             });
 
             return;
         }
 
-        await this.configService.saveOverrideConfig(config);
-        res.json({
-            success: true,
-            message: CONFIG_SAVE_RESTART_NOTICE
-        });
+        try {
+            await this.configService.saveOverrideConfig(config);
+            res.json({
+                success: true,
+                message: CONFIG_SAVE_RESTART_NOTICE
+            });
+        } catch (error) {
+            this._sendConfigError(res, 400, "override 配置保存失败", error);
+        }
     }
 
     /**
@@ -125,5 +133,15 @@ export class ConfigController {
                 }
             });
         }
+    }
+
+    private _sendConfigError(res: Response, statusCode: number, message: string, error: unknown): void {
+        const detail = error instanceof Error ? error.message : String(error);
+
+        res.status(statusCode).json({
+            success: false,
+            message,
+            details: [detail]
+        });
     }
 }

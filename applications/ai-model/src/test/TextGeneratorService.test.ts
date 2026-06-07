@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TextGeneratorService } from "../services/generators/text/TextGeneratorService";
 
-const { mockLogger } = vi.hoisted(() => ({
+const { mockChatOpenAIConstructor, mockLogger } = vi.hoisted(() => ({
+    mockChatOpenAIConstructor: vi.fn(),
     mockLogger: {
         debug: vi.fn(),
         info: vi.fn(),
@@ -18,7 +19,11 @@ const { mockLogger } = vi.hoisted(() => ({
 }));
 
 vi.mock("@langchain/openai", () => ({
-    ChatOpenAI: class MockChatOpenAI {}
+    ChatOpenAI: class MockChatOpenAI {
+        public constructor(options: unknown) {
+            mockChatOpenAIConstructor(options);
+        }
+    }
 }));
 
 vi.mock("@root/common/util/Logger", () => ({
@@ -78,6 +83,58 @@ describe("TextGeneratorService", () => {
             return [];
         }
     }
+
+    const buildModelConfig = (reasoning: { enabled: boolean; effort: string }) => ({
+        apiKey: "test-api-key",
+        baseURL: "https://api.example.com/v1",
+        temperature: 0.3,
+        maxTokens: 1024,
+        reasoning
+    });
+
+    it("模型未启用 reasoning 时不应透传 reasoning 参数", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValueOnce({
+            ai: {
+                models: {
+                    "plain-model": buildModelConfig({ enabled: false, effort: "minimal" })
+                },
+                defaultModelConfig: buildModelConfig({ enabled: false, effort: "minimal" }),
+                pinnedModels: []
+            },
+            logger: {
+                logDirectory: tempLogDir
+            }
+        });
+
+        await service.getChatModel("plain-model");
+
+        const options = mockChatOpenAIConstructor.mock.calls[0][0] as Record<string, unknown>;
+
+        expect(options).not.toHaveProperty("reasoning");
+    });
+
+    it("模型显式启用 reasoning 时应透传配置的 effort", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValueOnce({
+            ai: {
+                models: {
+                    "reasoning-model": buildModelConfig({ enabled: true, effort: "low" })
+                },
+                defaultModelConfig: buildModelConfig({ enabled: false, effort: "minimal" }),
+                pinnedModels: []
+            },
+            logger: {
+                logDirectory: tempLogDir
+            }
+        });
+
+        await service.getChatModel("reasoning-model");
+
+        expect(mockChatOpenAIConstructor.mock.calls[0][0]).toMatchObject({
+            reasoning: {
+                effort: "low"
+            }
+        });
+    });
 
     it("JSON 校验场景应剥离完整包裹的 JSON 代码围栏", async () => {
         vi.spyOn(service as any, "doGenerateTextStream").mockResolvedValue('```json\n[{"ok":true}]\n```');

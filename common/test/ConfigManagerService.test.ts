@@ -84,12 +84,27 @@ const mockMainConfig = {
         }
     },
     ai: {
-        models: {},
+        models: {
+            "gpt-4": {
+                apiKey: "test-api-key",
+                baseURL: "https://api.openai.com/v1",
+                temperature: 0.7,
+                maxTokens: 4096,
+                reasoning: {
+                    enabled: false,
+                    effort: "minimal" as const
+                }
+            }
+        },
         defaultModelConfig: {
             apiKey: "test-api-key",
             baseURL: "https://api.openai.com/v1",
             temperature: 0.7,
-            maxTokens: 4096
+            maxTokens: 4096,
+            reasoning: {
+                enabled: false,
+                effort: "minimal" as const
+            }
         },
         defaultModelName: "gpt-4",
         pinnedModels: [],
@@ -586,6 +601,24 @@ describe("ConfigManagerService", () => {
             expect(result.success).toBe(false);
             expect("errors" in result && result.errors).toBeInstanceOf(Array);
             expect("errors" in result && result.errors.length).toBeGreaterThan(0);
+        });
+
+        it("模型引用不存在时应返回失败", () => {
+            service = new ConfigManagerService();
+            const invalidConfig = {
+                ...mockMainConfig,
+                report: {
+                    ...mockMainConfig.report,
+                    generation: {
+                        ...mockMainConfig.report.generation,
+                        aiModels: ["missing-model"]
+                    }
+                }
+            };
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("missing-model"))).toBe(true);
         });
     });
 

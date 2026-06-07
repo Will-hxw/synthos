@@ -87,7 +87,7 @@ vi.mock("../di/container", () => ({
     getQQProvider: () => mockQQProvider
 }));
 
-import { IMTypes } from "@root/common/contracts/data-provider/index";
+import { IMTypes, QQ_SOURCE_RECONCILE_STATUS_PREFIX } from "@root/common/contracts/data-provider/index";
 
 import { ProvideDataTaskHandler } from "../tasks/ProvideDataTask";
 
@@ -136,6 +136,16 @@ describe("ProvideDataTaskHandler", () => {
         expect(mockImDbAccessService.storeRawChatMessages).toHaveBeenNthCalledWith(1, [currentMessage]);
         expect(mockQQProvider.getBusinessMsgIdPageAfterCursor).toHaveBeenCalledWith("group-a", null, 5000);
         expect(mockCursorStore.del).toHaveBeenCalledWith("qq-source-reconcile:group-a");
+        expect(mockCursorStore.put).toHaveBeenCalledWith(
+            `${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:group-a`,
+            expect.objectContaining({
+                groupId: "group-a",
+                scannedCount: 0,
+                missingCount: 0,
+                insertedCount: 0,
+                reachedEnd: true
+            })
+        );
     });
 
     it("历史补漏应只回源解析缺失 msgId 并推进游标", async () => {
@@ -170,6 +180,16 @@ describe("ProvideDataTaskHandler", () => {
         expect(mockQQProvider.getMsgsByMsgIds).toHaveBeenCalledWith(["missing-msg"], "group-a");
         expect(mockImDbAccessService.storeRawChatMessages).toHaveBeenNthCalledWith(2, [missingMessage]);
         expect(mockCursorStore.put).toHaveBeenCalledWith("qq-source-reconcile:group-a", nextCursor);
+        expect(mockCursorStore.put).toHaveBeenCalledWith(
+            `${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:group-a`,
+            expect.objectContaining({
+                groupId: "group-a",
+                scannedCount: 2,
+                missingCount: 1,
+                insertedCount: 1,
+                reachedEnd: false
+            })
+        );
         expect(mockCursorStore.del).not.toHaveBeenCalledWith("qq-source-reconcile:group-a");
     });
 
@@ -193,7 +213,17 @@ describe("ProvideDataTaskHandler", () => {
 
         expect(mockQQProvider.getMsgsByMsgIds).toHaveBeenCalledWith([], "group-a");
         expect(mockCursorStore.del).toHaveBeenCalledWith("qq-source-reconcile:group-a");
-        expect(mockCursorStore.put).not.toHaveBeenCalled();
+        expect(mockCursorStore.put).not.toHaveBeenCalledWith("qq-source-reconcile:group-a", expect.anything());
+        expect(mockCursorStore.put).toHaveBeenCalledWith(
+            `${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:group-a`,
+            expect.objectContaining({
+                groupId: "group-a",
+                scannedCount: 1,
+                missingCount: 0,
+                insertedCount: 0,
+                reachedEnd: true
+            })
+        );
     });
 
     async function runProvideDataJob(data: {

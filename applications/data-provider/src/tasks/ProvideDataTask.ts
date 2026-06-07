@@ -8,7 +8,12 @@ import Logger from "@root/common/util/Logger";
 import { ImDbAccessService } from "@root/common/services/database/ImDbAccessService";
 import { agendaInstance } from "@root/common/scheduler/agenda";
 import { TaskHandlerTypes, TaskParameters } from "@root/common/scheduler/@types/Tasks";
-import { IMTypes, RawChatMessage } from "@root/common/contracts/data-provider/index";
+import {
+    IMTypes,
+    QQ_SOURCE_RECONCILE_STATUS_PREFIX,
+    QQSourceReconcileStatus,
+    RawChatMessage
+} from "@root/common/contracts/data-provider/index";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { KVStore } from "@root/common/util/KVStore";
 
@@ -18,6 +23,8 @@ import { getQQProvider } from "../di/container";
 
 const QQ_SOURCE_RECONCILE_BATCH_SIZE = 5000;
 const QQ_SOURCE_RECONCILE_CURSOR_PREFIX = "qq-source-reconcile";
+
+type QQSourceReconcileStoreValue = QQSourceMessageCursor | QQSourceReconcileStatus;
 
 /**
  * 数据提供任务处理器
@@ -68,7 +75,7 @@ export class ProvideDataTaskHandler {
                     }
                 }
 
-                let qqSourceCursorStore: KVStore<QQSourceMessageCursor> | null = null;
+                let qqSourceCursorStore: KVStore<QQSourceReconcileStoreValue> | null = null;
 
                 try {
                     await activeProvider.init();
@@ -77,7 +84,7 @@ export class ProvideDataTaskHandler {
                     if (this._isQQSourceReconcileProvider(activeProvider)) {
                         const config = await this.configManagerService.getCurrentConfig();
 
-                        qqSourceCursorStore = new KVStore<QQSourceMessageCursor>(
+                        qqSourceCursorStore = new KVStore<QQSourceReconcileStoreValue>(
                             path.join(config.webUI_Backend.kvStoreBasePath, "data-provider", "qq-source-reconcile")
                         );
                     }
@@ -139,11 +146,11 @@ export class ProvideDataTaskHandler {
 
     private async _reconcileQQSourceMessages(
         provider: QQProvider,
-        cursorStore: KVStore<QQSourceMessageCursor>,
+        cursorStore: KVStore<QQSourceReconcileStoreValue>,
         groupId: string
     ): Promise<number> {
         const cursorKey = `${QQ_SOURCE_RECONCILE_CURSOR_PREFIX}:${groupId}`;
-        const cursor = (await cursorStore.get(cursorKey)) || null;
+        const cursor = ((await cursorStore.get(cursorKey)) as QQSourceMessageCursor | undefined) || null;
         const page = await provider.getBusinessMsgIdPageAfterCursor(
             groupId,
             cursor,
@@ -152,6 +159,18 @@ export class ProvideDataTaskHandler {
 
         if (page.messages.length === 0) {
             await cursorStore.del(cursorKey);
+            await this._storeQQSourceReconcileStatus(cursorStore, {
+                groupId,
+                cursor,
+                nextCursor: null,
+                scannedCount: 0,
+                missingCount: 0,
+                insertedCount: 0,
+                reachedEnd: true,
+                wrapped: false,
+                batchSize: QQ_SOURCE_RECONCILE_BATCH_SIZE,
+                updatedAt: Date.now()
+            });
             this.LOGGER.debug(`群 ${groupId} QQ 原库对账未扫描到业务消息。`);
 
             return 0;
@@ -164,6 +183,18 @@ export class ProvideDataTaskHandler {
 
         await this.imDbAccessService.storeRawChatMessages(missingMessages);
         await this._storeNextQQSourceCursor(cursorStore, cursorKey, page);
+        await this._storeQQSourceReconcileStatus(cursorStore, {
+            groupId,
+            cursor,
+            nextCursor: page.nextCursor,
+            scannedCount: sourceMsgIds.length,
+            missingCount: missingMsgIds.length,
+            insertedCount: missingMessages.length,
+            reachedEnd: page.reachedEnd,
+            wrapped: page.wrapped,
+            batchSize: QQ_SOURCE_RECONCILE_BATCH_SIZE,
+            updatedAt: Date.now()
+        });
         this.LOGGER.info(
             `群 ${groupId} QQ 原库对账扫描 ${sourceMsgIds.length} 条，缺失 ${missingMsgIds.length} 条，补入 ${missingMessages.length} 条。`
         );
@@ -172,7 +203,7 @@ export class ProvideDataTaskHandler {
     }
 
     private async _storeNextQQSourceCursor(
-        cursorStore: KVStore<QQSourceMessageCursor>,
+        cursorStore: KVStore<QQSourceReconcileStoreValue>,
         cursorKey: string,
         page: QQSourceMessagePage
     ): Promise<void> {
@@ -183,5 +214,12 @@ export class ProvideDataTaskHandler {
         }
 
         await cursorStore.put(cursorKey, page.nextCursor);
+    }
+
+    private async _storeQQSourceReconcileStatus(
+        cursorStore: KVStore<QQSourceReconcileStoreValue>,
+        status: QQSourceReconcileStatus
+    ): Promise<void> {
+        await cursorStore.put(`${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:${status.groupId}`, status);
     }
 }

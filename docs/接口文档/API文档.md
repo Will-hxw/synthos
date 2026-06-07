@@ -44,21 +44,14 @@
 - `GET /api/system/monitor/latest`：直接返回 `SystemStats` 或 `{}`
 - `GET /api/system/monitor/history`：直接返回 `SystemStats[]`
 
-### 2.5 例外：配置接口的部分错误字段为 error
+### 2.5 配置接口错误详情
 
-`ConfigController` 中部分分支直接返回：
-
-```json
-{ "success": false, "error": "..." }
-```
-
-或：
+配置接口失败时统一返回 `message`，需要展示具体校验原因时返回 `details`：
 
 ```json
-{ "success": false, "error": "配置验证失败", "details": ["..."] }
+{ "success": false, "message": "配置加载失败", "details": ["具体错误"] }
 ```
 
-前端应同时兼容 `message` 与 `error`。
 
 ---
 
@@ -73,6 +66,41 @@
   "success": true,
   "message": "WebUI后端服务运行正常",
   "timestamp": "2026-01-19T00:00:00.000Z"
+}
+```
+
+### GET /api/setup-status
+
+说明：返回本地部署关键依赖状态，用于 WebUI 空态诊断。包括配置群组数量、Ollama embedding 模型状态、最近 QQ 原库对账状态。
+
+响应：
+
+```json
+{
+  "success": true,
+  "data": {
+    "generatedAt": 1760000000000,
+    "groupCount": 1,
+    "configuredGroupIds": ["123456"],
+    "embedding": {
+      "ollamaBaseURL": "http://localhost:11434",
+      "model": "bge-m3",
+      "reachable": true,
+      "modelInstalled": true
+    },
+    "qqSourceReconcile": [
+      {
+        "groupId": "123456",
+        "scannedCount": 5000,
+        "missingCount": 3,
+        "insertedCount": 3,
+        "updatedAt": 1760000000000
+      }
+    ],
+    "checks": [
+      { "key": "group-config", "status": "ok", "message": "已配置 1 个群组" }
+    ]
+  }
 }
 ```
 
@@ -895,7 +923,7 @@ Body：`GlobalConfig`
 
 Body：`PartialGlobalConfig`
 
-- 验证失败（HTTP 400）：`{ success: false, error: "配置验证失败", details: string[] }`
+- 验证失败（HTTP 400）：`{ success: false, message: "配置验证失败", details: string[] }`
 - 保存成功：`{ success: true, message: "配置已保存。请重启相关服务后生效。" }`
 
 ### POST /api/config/validate

@@ -54,14 +54,14 @@ export class GenerateEmbeddingTaskHandler {
                 const embeddingStatus = await this.embeddingService.getAvailability();
 
                 if (!embeddingStatus.ollamaReachable) {
-                    this.LOGGER.error("Ollama 服务不可用，跳过当前任务");
+                    this.LOGGER.error(`Ollama 服务不可用，跳过当前任务：${embeddingStatus.error ?? "未知错误"}`);
 
                     return;
                 }
 
                 if (!embeddingStatus.modelInstalled) {
                     this.LOGGER.error(
-                        `Embedding 模型 ${embeddingStatus.model} 未安装，请先执行 ollama pull ${embeddingStatus.model}，跳过当前任务`
+                        `Ollama embedding 模型未安装，跳过当前任务：${embeddingStatus.model}。请执行 ollama pull ${embeddingStatus.model}`
                     );
 
                     return;

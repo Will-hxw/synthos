@@ -7,11 +7,23 @@ import { DeepRequired } from "../../../util/type/DeepRequired";
 /**
  * AI 模型配置 Schema
  */
+export const ModelReasoningConfigSchema = z.object({
+    enabled: z.boolean().default(false).describe("是否向模型请求透传 reasoning 参数"),
+    effort: z
+        .enum(["none", "minimal", "low", "medium", "high", "xhigh"])
+        .default("minimal")
+        .describe("reasoning effort")
+});
+
 export const ModelConfigSchema = z.object({
     apiKey: z.string().describe("API 密钥"),
     baseURL: z.string().url().describe("API 基础 URL"),
     temperature: z.number().min(0).max(2).describe("温度参数，控制输出的随机性"),
-    maxTokens: z.number().positive().int().describe("最大 Token 数量")
+    maxTokens: z.number().positive().int().describe("最大 Token 数量"),
+    reasoning: ModelReasoningConfigSchema.default({
+        enabled: false,
+        effort: "minimal"
+    }).describe("reasoning 参数透传配置")
 });
 
 /**
@@ -85,7 +97,7 @@ export const ReportConfigSchema = z
 /**
  * 全局配置 Schema
  */
-export const GlobalConfigSchema = z.object({
+export const GlobalConfigObjectSchema = z.object({
     dataProviders: z
         .object({
             QQ: z
@@ -240,10 +252,50 @@ export const GlobalConfigSchema = z.object({
         .describe("启动前命令")
 });
 
+const hasConfiguredModel = (models: Record<string, unknown>, modelName: string): boolean => {
+    return Object.prototype.hasOwnProperty.call(models, modelName);
+};
+
+const addMissingModelIssue = (ctx: z.RefinementCtx, path: (string | number)[], modelName: string): void => {
+    ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path,
+        message: `引用的 AI 模型 "${modelName}" 未在 ai.models 中配置`
+    });
+};
+
+export const GlobalConfigSchema = GlobalConfigObjectSchema.superRefine((config, ctx) => {
+    const models = config.ai.models;
+
+    if (!hasConfiguredModel(models, config.ai.defaultModelName)) {
+        addMissingModelIssue(ctx, ["ai", "defaultModelName"], config.ai.defaultModelName);
+    }
+
+    config.ai.pinnedModels.forEach((modelName, index) => {
+        if (!hasConfiguredModel(models, modelName)) {
+            addMissingModelIssue(ctx, ["ai", "pinnedModels", index], modelName);
+        }
+    });
+
+    Object.entries(config.groupConfigs).forEach(([groupId, groupConfig]) => {
+        groupConfig.aiModels.forEach((modelName, index) => {
+            if (!hasConfiguredModel(models, modelName)) {
+                addMissingModelIssue(ctx, ["groupConfigs", groupId, "aiModels", index], modelName);
+            }
+        });
+    });
+
+    config.report.generation.aiModels.forEach((modelName, index) => {
+        if (!hasConfiguredModel(models, modelName)) {
+            addMissingModelIssue(ctx, ["report", "generation", "aiModels", index], modelName);
+        }
+    });
+});
+
 /**
  * 部分配置 Schema（用于 override 配置验证）
  */
-export const PartialGlobalConfigSchema = GlobalConfigSchema.deepPartial();
+export const PartialGlobalConfigSchema = GlobalConfigObjectSchema.deepPartial();
 
 // ==================== TypeScript 类型（从 Zod Schema 自动推导）====================
 

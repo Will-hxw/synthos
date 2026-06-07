@@ -25,6 +25,16 @@ import { setupReportScheduler } from "./schedulers/reportScheduler";
 // 注意：日报生成任务由 reportScheduler 负责，独立于主 Pipeline
 
 const LOGGER = Logger.withTag("🎭 orchestrator-root-script");
+const PIPELINE_WORKER_TASKS = [
+    TaskHandlerTypes.ProvideData,
+    TaskHandlerTypes.Preprocess,
+    TaskHandlerTypes.AISummarize,
+    TaskHandlerTypes.GenerateEmbedding,
+    TaskHandlerTypes.InterestScore,
+    TaskHandlerTypes.LLMInterestEvaluationAndNotification
+];
+const WORKER_REGISTRATION_TIMEOUT_MS = 60 * 1000;
+const WORKER_REGISTRATION_POLL_INTERVAL_MS = 1000;
 
 @bootstrap
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -200,7 +210,7 @@ class OrchestratorApplication {
             }
         );
 
-        await sleep(10 * 1000); // 等其他apps启动后再开始流水线 TODO: 换成更优雅的方式
+        await this._waitForPipelineWorkerJobs(PIPELINE_WORKER_TASKS);
 
         // 读取配置，设置定时执行 Pipeline
         const pipelineIntervalMinutes = config.orchestrator?.pipelineIntervalInMinutes;
@@ -216,6 +226,42 @@ class OrchestratorApplication {
 
         // 设置日报定时任务
         await setupReportScheduler();
+    }
+
+    private async _waitForPipelineWorkerJobs(taskNames: TaskHandlerTypes[]): Promise<void> {
+        await agendaInstance.ready;
+
+        const startTime = Date.now();
+        let lastMissingSignature = "";
+
+        while (Date.now() - startTime <= WORKER_REGISTRATION_TIMEOUT_MS) {
+            const missingTaskNames: TaskHandlerTypes[] = [];
+
+            for (const taskName of taskNames) {
+                const jobs = await agendaInstance.jobs({ name: taskName });
+
+                if (jobs.length === 0) {
+                    missingTaskNames.push(taskName);
+                }
+            }
+
+            if (missingTaskNames.length === 0) {
+                LOGGER.success("Pipeline worker 任务已全部注册");
+
+                return;
+            }
+
+            const missingSignature = missingTaskNames.join(", ");
+
+            if (missingSignature !== lastMissingSignature) {
+                LOGGER.info(`等待 Pipeline worker 任务注册：${missingSignature}`);
+                lastMissingSignature = missingSignature;
+            }
+
+            await sleep(WORKER_REGISTRATION_POLL_INTERVAL_MS);
+        }
+
+        throw new Error(`Pipeline worker 任务注册超时：${lastMissingSignature || "未知任务"}`);
     }
 }
 
