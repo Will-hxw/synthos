@@ -213,13 +213,12 @@ class OrchestratorApplication {
         await this._waitForPipelineWorkerJobs(PIPELINE_WORKER_TASKS);
 
         // 读取配置，设置定时执行 Pipeline
-        const pipelineIntervalMinutes = config.orchestrator?.pipelineIntervalInMinutes;
+        const pipelineIntervalMinutes = config.orchestrator.pipelineIntervalInMinutes;
 
-        LOGGER.debug(`Pipeline 任务将每隔 ${pipelineIntervalMinutes} 分钟执行一次`);
+        LOGGER.debug(`Pipeline 任务将每隔 ${pipelineIntervalMinutes} 分钟执行一次，启动时不立即执行`);
         await agendaInstance.every(pipelineIntervalMinutes + " minutes", TaskHandlerTypes.RunPipeline, undefined, {
             skipImmediate: true
         });
-        await agendaInstance.now(TaskHandlerTypes.RunPipeline);
 
         LOGGER.success("✅ Orchestrator 准备就绪，启动 Agenda 调度器");
         await agendaInstance.start();
