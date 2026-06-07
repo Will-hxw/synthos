@@ -3,6 +3,8 @@
  * 负责构建和发送日报相关的邮件通知
  */
 import "reflect-metadata";
+import MarkdownIt from "markdown-it";
+import sanitizeHtml from "sanitize-html";
 import { injectable, inject } from "tsyringe";
 import Logger from "@root/common/util/Logger";
 import { Report, ReportType } from "@root/common/contracts/report/index";
@@ -17,6 +19,10 @@ import { COMMON_TOKENS } from "@root/common/di/tokens";
 @injectable()
 class ReportEmailService {
     private _logger: ReturnType<typeof Logger.withTag> | null = null;
+    private readonly _markdownRenderer = new MarkdownIt({
+        html: false,
+        linkify: true
+    });
 
     /**
      * 构造函数
@@ -141,6 +147,7 @@ class ReportEmailService {
 
         const activeGroupsStr =
             report.statistics.mostActiveGroups.length > 0 ? report.statistics.mostActiveGroups.join("、") : "暂无";
+        const summaryHtml = report.isEmpty ? "" : this._renderMarkdownSummary(report.summary);
 
         return `
 <!DOCTYPE html>
@@ -159,7 +166,21 @@ class ReportEmailService {
         .stat-card .value { font-size: 24px; font-weight: bold; color: #333; margin-top: 5px; }
         .summary { background: white; padding: 25px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .summary h2 { margin-top: 0; color: #333; font-size: 18px; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
-        .summary-text { white-space: pre-wrap; color: #555; }
+        .summary-text { color: #555; }
+        .summary-text h1 { font-size: 22px; margin: 18px 0 10px; color: #222; }
+        .summary-text h2 { font-size: 18px; margin: 16px 0 8px; color: #333; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+        .summary-text h3 { font-size: 16px; margin: 14px 0 8px; color: #333; }
+        .summary-text p { margin: 0 0 12px; }
+        .summary-text blockquote { margin: 12px 0; padding: 8px 12px; border-left: 4px solid #667eea; background: #f3f4f6; color: #4b5563; }
+        .summary-text ul, .summary-text ol { margin: 0 0 12px 22px; padding: 0; }
+        .summary-text li { margin: 4px 0; }
+        .summary-text hr { border: 0; border-top: 1px solid #e5e7eb; margin: 18px 0; }
+        .summary-text code { background: #f3f4f6; padding: 2px 4px; border-radius: 4px; font-family: Consolas, Monaco, monospace; font-size: 13px; }
+        .summary-text pre { background: #f3f4f6; padding: 12px; border-radius: 6px; overflow-x: auto; }
+        .summary-text table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+        .summary-text th, .summary-text td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; }
+        .summary-text th { background: #f3f4f6; }
+        .summary-text a { color: #2563eb; text-decoration: none; }
         .footer { margin-top: 30px; text-align: center; color: #999; font-size: 12px; }
         .empty-notice { background: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; text-align: center; }
     </style>
@@ -196,7 +217,7 @@ class ReportEmailService {
                 : `
         <div class="summary">
             <h2>📝 综述</h2>
-            <div class="summary-text">${this.emailService.escapeHtml(report.summary)}</div>
+            <div class="summary-text">${summaryHtml}</div>
         </div>
         `
         }
@@ -208,6 +229,192 @@ class ReportEmailService {
 </body>
 </html>
         `;
+    }
+
+    /**
+     * 将日报 Markdown 摘要转换为适合邮件客户端展示的安全 HTML。
+     * @param summary Markdown 格式的日报摘要
+     * @returns 经过白名单过滤后的 HTML
+     */
+    private _renderMarkdownSummary(summary: string): string {
+        const markdownWithoutHtml = this._stripRawHtmlTags(summary);
+        const rawHtml = this._markdownRenderer.render(markdownWithoutHtml);
+
+        return sanitizeHtml(rawHtml, {
+            allowedTags: [
+                "a",
+                "blockquote",
+                "br",
+                "code",
+                "del",
+                "em",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "hr",
+                "li",
+                "ol",
+                "p",
+                "pre",
+                "s",
+                "strong",
+                "table",
+                "tbody",
+                "td",
+                "th",
+                "thead",
+                "tr",
+                "ul"
+            ],
+            allowedAttributes: {
+                a: ["href", "target", "rel"]
+            },
+            allowedSchemes: ["http", "https", "mailto"],
+            transformTags: {
+                a: (tagName, attribs) => ({
+                    tagName,
+                    attribs: {
+                        ...attribs,
+                        target: "_blank",
+                        rel: "noopener noreferrer"
+                    }
+                })
+            }
+        });
+    }
+
+    /**
+     * 移除 Markdown 原文中的 HTML 标签，避免危险标签被作为可见源码塞进邮件正文。
+     * @param markdown Markdown 原文
+     * @returns 移除原始 HTML 标签后的 Markdown
+     */
+    private _stripRawHtmlTags(markdown: string): string {
+        let result = "";
+        let index = 0;
+        const lowerMarkdown = markdown.toLowerCase();
+
+        while (index < markdown.length) {
+            if (markdown[index] !== "<") {
+                result += markdown[index];
+                index++;
+                continue;
+            }
+
+            const tag = this._readHtmlTag(markdown, index);
+
+            if (!tag) {
+                result += markdown[index];
+                index++;
+                continue;
+            }
+
+            const tagEndIndex = markdown.indexOf(">", index + 1);
+
+            if (tagEndIndex === -1) {
+                result += markdown[index];
+                index++;
+                continue;
+            }
+
+            if (!tag.isClosing && (tag.name === "script" || tag.name === "style")) {
+                const closeTag = `</${tag.name}>`;
+                const closeTagStartIndex = lowerMarkdown.indexOf(closeTag, tagEndIndex + 1);
+
+                if (closeTagStartIndex === -1) {
+                    index = tagEndIndex + 1;
+                } else {
+                    index = closeTagStartIndex + closeTag.length;
+                }
+
+                continue;
+            }
+
+            index = tagEndIndex + 1;
+        }
+
+        return result;
+    }
+
+    /**
+     * 读取当前位置的 HTML 标签名称。
+     * @param markdown Markdown 原文
+     * @param tagStartIndex 标签起始下标
+     * @returns 标签信息；当前位置不是 HTML 标签时返回 null
+     */
+    private _readHtmlTag(markdown: string, tagStartIndex: number): { name: string; isClosing: boolean } | null {
+        let index = tagStartIndex + 1;
+
+        if (index >= markdown.length) {
+            return null;
+        }
+
+        if (markdown[index] === "!" || markdown[index] === "?") {
+            return { name: "", isClosing: false };
+        }
+
+        let isClosing = false;
+
+        if (markdown[index] === "/") {
+            isClosing = true;
+            index++;
+        }
+
+        if (index >= markdown.length || !this._isHtmlTagNameStart(markdown[index])) {
+            return null;
+        }
+
+        const nameStartIndex = index;
+
+        while (index < markdown.length && this._isHtmlTagNameChar(markdown[index])) {
+            index++;
+        }
+
+        if (index < markdown.length && !this._isHtmlTagBoundary(markdown[index])) {
+            return null;
+        }
+
+        return {
+            name: markdown.slice(nameStartIndex, index).toLowerCase(),
+            isClosing
+        };
+    }
+
+    /**
+     * 判断字符是否可以作为 HTML 标签名首字符。
+     * @param char 待判断字符
+     * @returns 是否为标签名首字符
+     */
+    private _isHtmlTagNameStart(char: string): boolean {
+        const charCode = char.charCodeAt(0);
+
+        return (charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122);
+    }
+
+    /**
+     * 判断字符是否可以作为 HTML 标签名后续字符。
+     * @param char 待判断字符
+     * @returns 是否为标签名字符
+     */
+    private _isHtmlTagNameChar(char: string): boolean {
+        const charCode = char.charCodeAt(0);
+
+        return (
+            (charCode >= 65 && charCode <= 90) ||
+            (charCode >= 97 && charCode <= 122) ||
+            (charCode >= 48 && charCode <= 57) ||
+            char === "-" ||
+            char === ":"
+        );
+    }
+
+    /**
+     * 判断字符是否为 HTML 标签名后的合法边界。
+     * @param char 待判断字符
+     * @returns 是否为标签名边界
+     */
+    private _isHtmlTagBoundary(char: string): boolean {
+        return char === ">" || char === "/" || char === " " || char === "\n" || char === "\r" || char === "\t";
     }
 }
 
