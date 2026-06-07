@@ -214,8 +214,8 @@
         "sendEmail": false,
         "schedule": {
             "halfDailyTimes": [
-                "12:00",
-                "18:00"
+                "11:00",
+                "23:00"
             ],
             "weeklyTime": "20:00",
             "weeklyDayOfWeek": 1,
@@ -223,9 +223,9 @@
             "monthlyDayOfMonth": 1
         },
         "generation": {
-            "topNTopics": 20,
+            "topNTopics": 100,
             "interestScoreThreshold": 0,
-            "llmRetryCount": 3,
+            "llmRetryCount": 5,
             "aiModels": ["example-model"]
         }
     },
