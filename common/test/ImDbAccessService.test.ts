@@ -148,6 +148,42 @@ describe("ImDbAccessService", () => {
         expect(mediaInsertCall![1][17]).toBe("skipped");
     });
 
+    it("只有本地缓存路径的图片媒体入库时应标记为 pending", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        await service.storeRawChatMessages([
+            {
+                msgId: "msg-1",
+                messageContent: "[图片，含本地缓存]",
+                groupId: "group-a",
+                timestamp: 1000,
+                senderId: "sender-a",
+                senderGroupNickname: "发送者",
+                senderNickname: "发送者",
+                mediaItems: [
+                    {
+                        mediaId: "msg-1:0",
+                        msgId: "msg-1",
+                        groupId: "group-a",
+                        timestamp: 1000,
+                        elementIndex: 0,
+                        mediaType: "image",
+                        sourceProvider: "QQ",
+                        sourcePath: "nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg"
+                    }
+                ]
+            }
+        ]);
+
+        const mediaInsertCall = mockCommonDBService.run.mock.calls.find(call =>
+            String(call[0]).includes("INSERT INTO chat_message_media")
+        );
+
+        expect(mediaInsertCall![1][8]).toBe("nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg");
+        expect(mediaInsertCall![1][17]).toBe("pending");
+    });
+
     it("音频媒体入库时应按源文件路径决定 pending 或 skipped 状态", async () => {
         const service = new ImDbAccessService();
 

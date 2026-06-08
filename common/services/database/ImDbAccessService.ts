@@ -234,7 +234,7 @@ export class ImDbAccessService extends Disposable {
                     ? hasSourcePath
                         ? "pending"
                         : "skipped"
-                    : hasSourceUrl
+                    : hasSourceUrl || hasSourcePath
                       ? "pending"
                       : "skipped";
 

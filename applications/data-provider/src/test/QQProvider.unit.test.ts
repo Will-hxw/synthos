@@ -434,6 +434,40 @@ describe("QQProvider", () => {
             ]);
         });
 
+        it("图片媒体元信息应保留本地缓存路径并忽略 QQNT 相对下载地址", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.IMAGE,
+                        imageUrlOrigin: "/download?appid=1407&fileid=abc&spec=0",
+                        imageUrlHigh: "",
+                        imageUrlLow: "",
+                        picWidth: 640,
+                        picHeight: 480,
+                        picType: 1000,
+                        picThumbPath: "nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg",
+                        originImageMd5: "",
+                        imageText: ""
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].mediaItems).toEqual([
+                expect.objectContaining({
+                    mediaId: `${mockMsgId}:0`,
+                    sourceUrl: undefined,
+                    sourcePath: path.normalize("nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg")
+                })
+            ]);
+        });
+
         it("应正确处理语音消息", async () => {
             const mockRow = createMockDbRow();
             const qqMediaRootPath = path.dirname(
