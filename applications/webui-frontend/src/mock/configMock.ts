@@ -11,7 +11,6 @@ const CONFIG_SAVE_RESTART_NOTICE = "配置已保存。请重启相关服务后�
 
 let baseConfig: Record<string, unknown> = {
     ai: {
-        defaultModelName: "example-model",
         defaultModelNames: ["example-model"]
     },
     report: {
@@ -41,11 +40,6 @@ const buildMockSchema = (): JsonSchema => {
                 type: "object",
                 title: "AI",
                 properties: {
-                    defaultModelName: {
-                        type: "string",
-                        title: "默认兜底模型",
-                        default: "example-model"
-                    },
                     defaultModelNames: {
                         type: "array",
                         title: "默认模型列表",
@@ -56,7 +50,7 @@ const buildMockSchema = (): JsonSchema => {
                         default: ["example-model"]
                     }
                 },
-                required: ["defaultModelName", "defaultModelNames"]
+                required: ["defaultModelNames"]
             },
             report: {
                 type: "object",

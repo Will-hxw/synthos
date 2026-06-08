@@ -176,7 +176,6 @@ export const GlobalConfigObjectSchema = z.object({
         .object({
             models: z.record(z.string(), ModelConfigSchema).describe("模型配置映射"),
             defaultModelConfig: ModelConfigSchema.describe("默认模型配置"),
-            defaultModelName: z.string().describe("默认模型名称"),
             defaultModelNames: z
                 .array(z.string())
                 .min(1, "至少配置一个默认 AI 模型")
@@ -316,10 +315,6 @@ export const GlobalConfigSchema = GlobalConfigObjectSchema.superRefine((config, 
             path: ["dataProviders", "QQ", "sourceReconcile", "batchSize"],
             message: "启用 QQ 原库回填时 batchSize 必须大于 0"
         });
-    }
-
-    if (!hasConfiguredModel(models, config.ai.defaultModelName)) {
-        addMissingModelIssue(ctx, ["ai", "defaultModelName"], config.ai.defaultModelName);
     }
 
     config.ai.defaultModelNames.forEach((modelName, index) => {

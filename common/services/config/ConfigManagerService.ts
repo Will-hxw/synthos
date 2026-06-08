@@ -111,9 +111,10 @@ class ConfigManagerService {
 
         // 3. 合并主配置和 override 配置
         const mergedConfig = deepMerge(baseConfig, overrideConfig);
+        const migratedConfig = this._migrateLegacyModelConfig(mergedConfig);
 
         // 4. 用 Zod 全量 Schema 验证合并后的配置文件是否完整且类型正确
-        const parsed = GlobalConfigSchema.safeParse(mergedConfig);
+        const parsed = GlobalConfigSchema.safeParse(migratedConfig);
 
         if (!parsed.success) {
             const errors = parsed.error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join("\n");
@@ -252,6 +253,38 @@ class ConfigManagerService {
             success: false,
             errors: result.error.errors.map(e => `${e.path.join(".")}: ${e.message}`)
         };
+    }
+
+    /**
+     * 兼容历史模型字段；运行时配置对象只保留当前的 defaultModelNames 契约。
+     */
+    private _migrateLegacyModelConfig(config: unknown): unknown {
+        if (!this._isRecord(config)) {
+            return config;
+        }
+
+        const aiConfig = config.ai;
+
+        if (!this._isRecord(aiConfig)) {
+            return config;
+        }
+
+        if (!Array.isArray(aiConfig.defaultModelNames)) {
+            if (Array.isArray(aiConfig.pinnedModels)) {
+                aiConfig.defaultModelNames = aiConfig.pinnedModels;
+            } else if (typeof aiConfig.defaultModelName === "string" && aiConfig.defaultModelName.length > 0) {
+                aiConfig.defaultModelNames = [aiConfig.defaultModelName];
+            }
+        }
+
+        delete aiConfig.defaultModelName;
+        delete aiConfig.pinnedModels;
+
+        return config;
+    }
+
+    private _isRecord(value: unknown): value is Record<string, unknown> {
+        return typeof value === "object" && value !== null && !Array.isArray(value);
     }
 
     private _resolveRuntimePaths(config: GlobalConfig, configPath: string): GlobalConfig {

@@ -117,7 +117,6 @@ const mockMainConfig = {
                 effort: "minimal" as const
             }
         },
-        defaultModelName: "gpt-4",
         defaultModelNames: ["gpt-4"],
         maxConcurrentRequests: 5,
         context: {
@@ -416,6 +415,50 @@ describe("ConfigManagerService", () => {
             );
         });
 
+        it("历史配置仅有 defaultModelName 时应迁移为默认模型列表", async () => {
+            const { defaultModelNames, ...aiWithoutDefaultModelNames } = mockMainConfig.ai;
+            const legacyConfig = {
+                ...mockMainConfig,
+                ai: {
+                    ...aiWithoutDefaultModelNames,
+                    defaultModelName: "gpt-4"
+                }
+            };
+
+            void defaultModelNames;
+
+            process.env.SYNTHOS_CONFIG_PATH = testConfigPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(legacyConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.ai.defaultModelNames).toEqual(["gpt-4"]);
+            expect((config.ai as unknown as Record<string, unknown>).defaultModelName).toBeUndefined();
+        });
+
+        it("历史配置仅有 pinnedModels 时应迁移为默认模型列表", async () => {
+            const { defaultModelNames, ...aiWithoutDefaultModelNames } = mockMainConfig.ai;
+            const legacyConfig = {
+                ...mockMainConfig,
+                ai: {
+                    ...aiWithoutDefaultModelNames,
+                    pinnedModels: ["gpt-4"]
+                }
+            };
+
+            void defaultModelNames;
+
+            process.env.SYNTHOS_CONFIG_PATH = testConfigPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(legacyConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.ai.defaultModelNames).toEqual(["gpt-4"]);
+            expect((config.ai as unknown as Record<string, unknown>).pinnedModels).toBeUndefined();
+        });
+
         it("应将相对路径解析为相对于配置文件所在目录的绝对路径", async () => {
             const configRoot = join(process.cwd(), "runtime-config");
             const configPath = join(configRoot, "synthos_config.json");
@@ -630,10 +673,14 @@ describe("ConfigManagerService", () => {
             expect(typeof schema).toBe("object");
             // JSON Schema 应该有基本结构（可能在根对象或 definitions 中）
             expect(schema).toHaveProperty("$schema");
-            const schemaText = JSON.stringify(schema);
+            const aiSchema = (schema as any).definitions.GlobalConfig.properties.ai;
 
-            expect(schemaText).toContain("defaultModelNames");
-            expect(schemaText).not.toContain("pinnedModels");
+            expect(aiSchema.properties).toHaveProperty("defaultModelNames");
+            expect(aiSchema.properties).not.toHaveProperty("defaultModelName");
+            expect(aiSchema.properties).not.toHaveProperty("pinnedModels");
+            expect(aiSchema.required).toContain("defaultModelNames");
+            expect(aiSchema.required).not.toContain("defaultModelName");
+            expect(aiSchema.required).not.toContain("pinnedModels");
         });
     });
 
@@ -801,6 +848,30 @@ describe("ConfigManagerService", () => {
             expect(result.success).toBe(false);
             expect("errors" in result && result.errors.some(error => error.includes("pinnedModels"))).toBe(true);
         });
+
+        it("旧的 defaultModelName 字段不能替代默认模型列表", () => {
+            service = new ConfigManagerService();
+            const { defaultModelNames, ...aiWithoutDefaultModelNames } = mockMainConfig.ai;
+            const invalidConfig = {
+                ...mockMainConfig,
+                ai: {
+                    ...aiWithoutDefaultModelNames,
+                    defaultModelName: "gpt-4"
+                }
+            };
+
+            void defaultModelNames;
+
+            const result = service.validateConfig(invalidConfig);
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("defaultModelNames"))).toBe(
+                true
+            );
+            expect("errors" in result && result.errors.some(error => error.includes("defaultModelName"))).toBe(
+                true
+            );
+        });
     });
 
     describe("validatePartialConfig", () => {
@@ -825,6 +896,20 @@ describe("ConfigManagerService", () => {
             expect(result.success).toBe(false);
             expect("errors" in result && result.errors).toBeInstanceOf(Array);
             expect("errors" in result && result.errors.length).toBeGreaterThan(0);
+        });
+
+        it("override 中旧的 defaultModelName 字段不应被接受", () => {
+            service = new ConfigManagerService();
+            const result = service.validatePartialConfig({
+                ai: {
+                    defaultModelName: "gpt-4"
+                }
+            });
+
+            expect(result.success).toBe(false);
+            expect("errors" in result && result.errors.some(error => error.includes("defaultModelName"))).toBe(
+                true
+            );
         });
     });
 

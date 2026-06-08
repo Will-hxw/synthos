@@ -107,7 +107,6 @@ describe("LLMInterestEvaluationAndNotificationTaskHandler", () => {
         vi.clearAllMocks();
         mockConfigManagerService.getCurrentConfig.mockResolvedValue({
             ai: {
-                defaultModelName: "mock-model",
                 defaultModelNames: ["default-model-a", "default-model-b"],
                 interestScore: {
                     llmEvaluationDescriptions: ["技术讨论"],

@@ -51,7 +51,6 @@
                 "effort": "minimal"
             }
         },
-        "defaultModelName": "example-model",
         "defaultModelNames": ["example-model"],
         "maxConcurrentRequests": 10,
         "context": {
