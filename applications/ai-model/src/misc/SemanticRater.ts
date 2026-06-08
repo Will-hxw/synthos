@@ -3,6 +3,7 @@ import Logger from "@root/common/util/Logger";
 import { EmbeddingService } from "../services/embedding/EmbeddingService";
 import { EmbeddingPromptStore } from "../context/prompts/EmbeddingPromptStore";
 const INTEREST_SCORE_SCALE = 5;
+const INTEREST_SCORE_TOP_K = 5;
 const MAX_INPUT_LENGTH = Infinity; // 保留此配置项，以备后续可能需要限制输入长度
 
 /**
@@ -134,9 +135,9 @@ export class SemanticRater {
      * @param userInterests 用户兴趣关键词列表，每个包含 keyword 和 liked 标志
      * @param topics 话题详情文本数组
      * @returns 打分值数组，范围 [-1, 1]
-     *   - 正向关键词（liked: true）：取与话题的最大相似度
-     *   - 负向关键词（liked: false）：取与话题的最大相似度
-     *   - 最终得分 = max_sim(正向) - max_sim(负向)
+     *   - 正向关键词（liked: true）：取与话题相似度最高的若干关键词平均值
+     *   - 负向关键词（liked: false）：取与话题相似度最高的若干关键词平均值
+     *   - 最终得分 = top_k_avg_sim(正向) - top_k_avg_sim(负向)
      */
     public async scoreTopics(userInterests: UserInterest[], topics: string[]): Promise<number[]> {
         if (userInterests.length === 0) {
@@ -207,14 +208,14 @@ export class SemanticRater {
             let posSim = 0;
             let negSim = 0;
 
-            // 正向：取最大相似度（若无正向关键词，则为 0）
+            // 正向：取 top-k 平均相似度（若无正向关键词，则为 0）
             if (positiveKeywords.length > 0) {
-                posSim = this._getMaxSimilarity(positiveKeywords, positiveKeywordVectors, topicVec);
+                posSim = this._getTopKAverageSimilarity(uniquePositiveKeywords, positiveKeywordVectors, topicVec);
             }
 
-            // 负向：取最大相似度（若无负向关键词，则为 0）
+            // 负向：取 top-k 平均相似度（若无负向关键词，则为 0）
             if (negativeKeywords.length > 0) {
-                negSim = this._getMaxSimilarity(negativeKeywords, negativeKeywordVectors, topicVec);
+                negSim = this._getTopKAverageSimilarity(uniqueNegativeKeywords, negativeKeywordVectors, topicVec);
             }
 
             const rawScore = posSim - negSim; // 理论范围 [-1, 1]
@@ -232,24 +233,59 @@ export class SemanticRater {
         return Math.max(-1, Math.min(1, rawScore * INTEREST_SCORE_SCALE));
     }
 
-    private _getMaxSimilarity(
+    private _getTopKAverageSimilarity(
         keywords: string[],
         keywordVectors: Map<string, Float32Array>,
         topicVec: Float32Array
     ): number {
-        let maxSim = 0;
+        const topSimilarities: number[] = [];
 
         for (const keyword of keywords) {
             const vec = keywordVectors.get(keyword)!;
 
             const sim = this.cosineSimilarity(vec, topicVec);
 
-            if (sim > maxSim) {
-                maxSim = sim;
-            }
+            this._insertTopSimilarity(topSimilarities, sim);
         }
 
-        return maxSim;
+        if (topSimilarities.length === 0) {
+            return 0;
+        }
+
+        let sum = 0;
+
+        for (const similarity of topSimilarities) {
+            sum += similarity;
+        }
+
+        return sum / topSimilarities.length;
+    }
+
+    private _insertTopSimilarity(topSimilarities: number[], similarity: number): void {
+        if (topSimilarities.length < INTEREST_SCORE_TOP_K) {
+            topSimilarities.push(similarity);
+            topSimilarities.sort((left, right) => right - left);
+
+            return;
+        }
+
+        const lastIndex = topSimilarities.length - 1;
+
+        if (similarity <= topSimilarities[lastIndex]) {
+            return;
+        }
+
+        topSimilarities[lastIndex] = similarity;
+        for (let i = lastIndex; i > 0; i--) {
+            if (topSimilarities[i] <= topSimilarities[i - 1]) {
+                break;
+            }
+
+            const previous = topSimilarities[i - 1];
+
+            topSimilarities[i - 1] = topSimilarities[i];
+            topSimilarities[i] = previous;
+        }
     }
 
     /**
@@ -257,9 +293,9 @@ export class SemanticRater {
      * @param userInterests 用户兴趣关键词列表，每个包含 keyword 和 liked 标志
      * @param topicDetail 话题详情文本
      * @returns 打分值，范围 [-1, 1]
-     *   - 正向关键词（liked: true）：取与话题的最大相似度
-     *   - 负向关键词（liked: false）：取与话题的最大相似度
-     *   - 最终得分 = max_sim(正向) - max_sim(负向)
+     *   - 正向关键词（liked: true）：取与话题相似度最高的若干关键词平均值
+     *   - 负向关键词（liked: false）：取与话题相似度最高的若干关键词平均值
+     *   - 最终得分 = top_k_avg_sim(正向) - top_k_avg_sim(负向)
      */
     public async scoreTopic(userInterests: UserInterest[], topicDetail: string): Promise<number> {
         const scores = await this.scoreTopics(userInterests, [topicDetail]);
