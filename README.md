@@ -256,7 +256,8 @@ cp synthos_config.example.json synthos_config.json
 
       "dbKey": "<数据库密钥>",
       "dbPatch": { "enabled": false, "patchSQL": "" },
-      "sourceReconcile": { "enabled": false, "batchSize": 50000 }
+      "sourceReconcile": { "enabled": false, "batchSize": 50000 },
+      "groupFile": { "includePathInMessageContent": true }
     }
   }
 }
@@ -269,6 +270,7 @@ cp synthos_config.example.json synthos_config.json
 | `dbKey` | QQ 数据库加密密钥 |
 | `sourceReconcile.enabled` | 是否启用 QQ 原库回填；设为 `false` 时跳过原库扫描 |
 | `sourceReconcile.batchSize` | QQ 原库每个群每轮扫描的业务消息数量，默认 50000，最大 50000；`enabled=false` 时可为 0 |
+| `groupFile.includePathInMessageContent` | 是否在群文件消息正文中追加完整文件路径，用于本地排查 |
 
 历史数据是分批渐进处理的：`dataProviders.QQ.sourceReconcile.enabled` 控制是否启用 QQ 原库扫描；启用时 `dataProviders.QQ.sourceReconcile.batchSize` 控制每轮从 QQ 原库扫描多少业务消息，`preprocessors.historicalBackfill.messageLimit` 控制每轮对已落库但尚未分配 `sessionId` 的历史消息做多少候选回填，默认 10000。
 

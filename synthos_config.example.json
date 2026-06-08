@@ -11,6 +11,9 @@
             "sourceReconcile": {
                 "enabled": false,
                 "batchSize": 50000
+            },
+            "groupFile": {
+                "includePathInMessageContent": true
             }
         }
     },

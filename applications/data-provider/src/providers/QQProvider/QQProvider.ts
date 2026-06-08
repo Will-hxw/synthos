@@ -56,6 +56,11 @@ interface MediaOwnerInfo {
     timestamp: number;
 }
 
+interface QQGroupFileInfo {
+    fileName: string;
+    filePath: string;
+}
+
 interface QQVoiceFileInfo {
     fileName: string;
     sourcePath: string;
@@ -71,7 +76,9 @@ interface QQVoiceFileInfo {
 export class QQProvider extends Disposable implements IIMProvider {
     private db: PromisifiedSQLite | null = null;
     private filesInChatDb: PromisifiedSQLite | null = null;
+    private richMediaDb: PromisifiedSQLite | null = null;
     private qqMediaRootPath = "";
+    private includeGroupFilePathInMessageContent = true;
     private LOGGER = Logger.withTag("QQProvider");
     private messagePBParser = this._registerDisposable(new MessagePBParser());
 
@@ -220,6 +227,7 @@ export class QQProvider extends Disposable implements IIMProvider {
         await tempDb.dispose();
 
         this.qqMediaRootPath = this._getTencentFilesRootPath(config.dbBasePath);
+        this.includeGroupFilePathInMessageContent = config.groupFile.includePathInMessageContent;
 
         const dbPath = path.join(config.dbBasePath, "nt_msg.db");
         const db = await this._openEncryptedDatabase(dbPath, config.dbKey);
@@ -242,6 +250,17 @@ export class QQProvider extends Disposable implements IIMProvider {
         } catch (error) {
             this.LOGGER.warning(
                 `files_in_chat.db 打开失败，后续语音媒体将无法定位源文件：${this._formatUnknownError(error)}`
+            );
+        }
+
+        try {
+            const richMediaDbPath = path.join(config.dbBasePath, "rich_media.db");
+            const richMediaDb = await this._openEncryptedDatabase(richMediaDbPath, config.dbKey);
+
+            this.richMediaDb = this._registerDisposable(richMediaDb);
+        } catch (error) {
+            this.LOGGER.warning(
+                `rich_media.db 打开失败，后续群文件消息将无法补全文件名或路径：${this._formatUnknownError(error)}`
             );
         }
 
@@ -368,7 +387,7 @@ export class QQProvider extends Disposable implements IIMProvider {
                     break;
                 }
                 case MsgElementType.FILE: {
-                    result += this._formatFileMessage(rawMsgElement);
+                    result += await this._formatFileMessage(rawMsgElement, mediaOwner);
                     break;
                 }
                 case MsgElementType.VIDEO: {
@@ -595,25 +614,16 @@ export class QQProvider extends Disposable implements IIMProvider {
         return this._buildBracketedMessage("语音", parts);
     }
 
-    private _formatFileMessage(element: MsgElement): string {
+    private async _formatFileMessage(element: MsgElement, mediaOwner?: MediaOwnerInfo): Promise<string> {
         const parts: string[] = [];
-        const fileName = this._normalizeInlineText(element.fileName);
-        const fileSize = this._formatFileSize(element.fileSize);
+        const fileInfo = await this._resolveGroupFileInfo(element, mediaOwner);
 
-        if (fileName) {
-            parts.push(`文件名：${fileName}`);
+        if (fileInfo.fileName) {
+            parts.push(`文件名：${fileInfo.fileName}`);
         }
 
-        if (fileSize) {
-            parts.push(`大小：${fileSize}`);
-        }
-
-        if (!fileName) {
-            const fileUuid = this._normalizeInlineText(element.fileUuid);
-
-            if (fileUuid) {
-                parts.push(`文件ID：${this._truncateText(fileUuid, 16)}`);
-            }
+        if (this.includeGroupFilePathInMessageContent && fileInfo.filePath) {
+            parts.push(`路径：${fileInfo.filePath}`);
         }
 
         if (parts.length === 0) {
@@ -621,6 +631,72 @@ export class QQProvider extends Disposable implements IIMProvider {
         }
 
         return this._buildBracketedMessage("文件", parts);
+    }
+
+    private async _resolveGroupFileInfo(
+        element: MsgElement,
+        mediaOwner?: MediaOwnerInfo
+    ): Promise<QQGroupFileInfo> {
+        const protobufFileName = this._normalizeInlineText(element.fileName);
+        const protobufFilePath = this._normalizeInlineText(element.filePath);
+
+        if (protobufFileName && protobufFilePath) {
+            return {
+                fileName: protobufFileName,
+                filePath: protobufFilePath
+            };
+        }
+
+        const richMediaFileInfo = await this._getRichMediaFileInfo(element, mediaOwner);
+
+        return {
+            fileName: protobufFileName || richMediaFileInfo.fileName,
+            filePath: protobufFilePath || richMediaFileInfo.filePath
+        };
+    }
+
+    private async _getRichMediaFileInfo(
+        element: MsgElement,
+        mediaOwner?: MediaOwnerInfo
+    ): Promise<QQGroupFileInfo> {
+        const elementId = this._normalizeInlineText(element.elementId);
+
+        if (!this.richMediaDb || !mediaOwner || !elementId) {
+            return {
+                fileName: "",
+                filePath: ""
+            };
+        }
+
+        try {
+            const row = (await this.richMediaDb.get(
+                `SELECT "45402" AS fileName, "45403" AS filePath
+                 FROM file_table
+                 WHERE CAST("40001" AS TEXT) = ? AND CAST("45001" AS TEXT) = ?
+                 ORDER BY rowid DESC
+                 LIMIT 1`,
+                [mediaOwner.msgId, elementId]
+            )) as
+                | {
+                      fileName: string | null;
+                      filePath: string | null;
+                  }
+                | undefined;
+
+            return {
+                fileName: this._normalizeInlineText(row?.fileName || ""),
+                filePath: this._normalizeInlineText(row?.filePath || "")
+            };
+        } catch (error) {
+            this.LOGGER.warning(
+                `查询群文件信息失败，msgId=${mediaOwner.msgId}, elementId=${elementId}：${this._formatUnknownError(error)}`
+            );
+
+            return {
+                fileName: "",
+                filePath: ""
+            };
+        }
     }
 
     private _formatVideoMessage(element: MsgElement): string {
@@ -777,24 +853,6 @@ export class QQProvider extends Disposable implements IIMProvider {
         }
 
         return this._normalizeInlineText(result);
-    }
-
-    private _formatFileSize(value: string): string {
-        const bytes = Number(value);
-
-        if (!Number.isFinite(bytes) || bytes <= 0) {
-            return "";
-        }
-
-        if (bytes >= 1024 * 1024) {
-            return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-        }
-
-        if (bytes >= 1024) {
-            return `${(bytes / 1024).toFixed(1)}KB`;
-        }
-
-        return `${bytes}B`;
     }
 
     private _parsePositiveInteger(value: unknown): number | undefined {

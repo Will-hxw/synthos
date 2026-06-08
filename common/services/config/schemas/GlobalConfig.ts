@@ -13,6 +13,7 @@ export const IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT = 30000;
 export const AUDIO_TRANSCRIPTION_BATCH_SIZE_DEFAULT = 20;
 export const AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS_DEFAULT = 60000;
 export const AUDIO_TRANSCRIPTION_MAX_AUDIO_BASE64_BYTES_DEFAULT = 10 * 1024 * 1024;
+export const QQ_GROUP_FILE_INCLUDE_PATH_IN_MESSAGE_CONTENT_DEFAULT = true;
 
 /**
  * AI 模型配置 Schema
@@ -289,7 +290,18 @@ export const GlobalConfigObjectSchema = z.object({
                             enabled: true,
                             batchSize: QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT
                         })
-                        .describe("QQ 原库回填配置")
+                        .describe("QQ 原库回填配置"),
+                    groupFile: z
+                        .object({
+                            includePathInMessageContent: z
+                                .boolean()
+                                .default(QQ_GROUP_FILE_INCLUDE_PATH_IN_MESSAGE_CONTENT_DEFAULT)
+                                .describe("是否在群文件消息正文中追加完整文件路径，用于本地排查")
+                        })
+                        .default({
+                            includePathInMessageContent: QQ_GROUP_FILE_INCLUDE_PATH_IN_MESSAGE_CONTENT_DEFAULT
+                        })
+                        .describe("QQ 群文件消息正文配置")
                 })
                 .describe("QQ 数据源配置")
         })
