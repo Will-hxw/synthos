@@ -230,18 +230,6 @@ export default function GroupsPage() {
         }
     };
 
-    // 获取AI模型标签
-    const getAIModelLabel = (model: string) => {
-        switch (model) {
-            case "gpt-3.5-turbo":
-                return "GPT-3.5 Turbo";
-            case "gpt-4":
-                return "GPT-4";
-            default:
-                return model;
-        }
-    };
-
     // 构建并排序群组列表
     const sortedGroupList = useMemo(() => {
         const items: GroupListItem[] = Object.entries(groups).map(([groupId, groupDetail]) => ({
@@ -269,10 +257,6 @@ export default function GroupsPage() {
                     case "splitStrategy":
                         first = a.groupDetail.splitStrategy;
                         second = b.groupDetail.splitStrategy;
-                        break;
-                    case "aiModel":
-                        first = a.groupDetail.aiModel;
-                        second = b.groupDetail.aiModel;
                         break;
                     case "messageCount":
                         first = a.messageCount;
@@ -397,9 +381,6 @@ export default function GroupsPage() {
                                     <TableColumn key="splitStrategy" allowsSorting>
                                         分组策略
                                     </TableColumn>
-                                    <TableColumn key="aiModel" allowsSorting>
-                                        AI模型
-                                    </TableColumn>
                                     <TableColumn key="messageCount" allowsSorting>
                                         最近24小时消息量
                                     </TableColumn>
@@ -418,7 +399,6 @@ export default function GroupsPage() {
                                                 </div>
                                             </TableCell>
                                             <TableCell className="font-semibold">所有群组</TableCell>
-                                            <TableCell>-</TableCell>
                                             <TableCell>-</TableCell>
                                             <TableCell>-</TableCell>
                                             <TableCell>-</TableCell>
@@ -464,7 +444,6 @@ export default function GroupsPage() {
                                                         {getSplitStrategyLabel(groupDetail.splitStrategy)}
                                                     </Chip>
                                                 </TableCell>
-                                                <TableCell>{getAIModelLabel(groupDetail.aiModel)}</TableCell>
                                                 <TableCell>
                                                     <div className="flex flex-col gap-1">
                                                         {renderCountValue(messageCount)}
