@@ -184,6 +184,49 @@ describe("ImDbAccessService", () => {
         expect(mediaInsertCall![1][17]).toBe("pending");
     });
 
+    it("重复图片媒体入库时应补齐缺失字段并重置可重试状态", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        await service.storeRawChatMessages([
+            {
+                msgId: "msg-1",
+                messageContent: "[图片，含本地缓存]",
+                groupId: "group-a",
+                timestamp: 1000,
+                senderId: "sender-a",
+                senderGroupNickname: "发送者",
+                senderNickname: "发送者",
+                mediaItems: [
+                    {
+                        mediaId: "msg-1:0",
+                        msgId: "msg-1",
+                        groupId: "group-a",
+                        timestamp: 1000,
+                        elementIndex: 0,
+                        mediaType: "image",
+                        sourceProvider: "QQ",
+                        sourcePath: "nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg",
+                        width: 640,
+                        height: 480
+                    }
+                ]
+            }
+        ]);
+
+        const mediaInsertCall = mockCommonDBService.run.mock.calls.find(call =>
+            String(call[0]).includes("INSERT INTO chat_message_media")
+        );
+        const sql = String(mediaInsertCall![0]);
+
+        expect(sql).toContain("ON CONFLICT(mediaId) DO UPDATE SET");
+        expect(sql).toContain("sourcePath = COALESCE(chat_message_media.sourcePath, excluded.sourcePath)");
+        expect(sql).toContain("THEN 'pending'");
+        expect(sql).toContain("THEN 0");
+        expect(sql).toContain("THEN NULL");
+        expect(mediaInsertCall![1][8]).toBe("nt_qq/nt_data/Pic/2026-06/Thumb/abc.jpg");
+    });
+
     it("音频媒体入库时应按源文件路径决定 pending 或 skipped 状态", async () => {
         const service = new ImDbAccessService();
 

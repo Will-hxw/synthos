@@ -37,18 +37,23 @@ const PIPELINE_WORKER_TASKS = [
     TaskHandlerTypes.InterestScore,
     TaskHandlerTypes.LLMInterestEvaluationAndNotification
 ];
+const PIPELINE_STARTUP_CLEANUP_TASKS = [TaskHandlerTypes.RunPipeline, ...PIPELINE_WORKER_TASKS];
 const WORKER_REGISTRATION_TIMEOUT_MS = 60 * 1000;
 const WORKER_REGISTRATION_POLL_INTERVAL_MS = 1000;
 
 export async function schedulePipelineIntervalWithStartupRun(pipelineIntervalMinutes: number): Promise<void> {
-    const pipelineJob = await agendaInstance.every(
-        pipelineIntervalMinutes + " minutes",
-        TaskHandlerTypes.RunPipeline,
-        undefined,
-        {
-            skipImmediate: true
-        }
-    );
+    await agendaInstance.every(pipelineIntervalMinutes + " minutes", TaskHandlerTypes.RunPipeline, undefined, {
+        skipImmediate: true
+    });
+
+    const pipelineJobs = await agendaInstance.jobs({ name: TaskHandlerTypes.RunPipeline });
+    const pipelineJob =
+        pipelineJobs.find(job => job.attrs.repeatInterval && job.attrs.lockedAt) ||
+        pipelineJobs.find(job => job.attrs.repeatInterval);
+
+    if (!pipelineJob) {
+        throw new Error("RunPipeline 周期任务创建失败");
+    }
 
     if (pipelineJob.attrs.lockedAt) {
         LOGGER.warning(`启动时发现 RunPipeline 残留锁，锁定时间: ${pipelineJob.attrs.lockedAt}`);
@@ -70,19 +75,8 @@ class OrchestratorApplication {
 
         let config = await ConfigManagerService.getCurrentConfig();
 
-        // 在启动前清理所有残留任务，避免上次运行残留的任务导致非预期执行
-        await cleanupStaleJobs([
-            TaskHandlerTypes.RunPipeline,
-            TaskHandlerTypes.ProvideData,
-            TaskHandlerTypes.ImageUnderstanding,
-            TaskHandlerTypes.Preprocess,
-            TaskHandlerTypes.AudioTranscription,
-            TaskHandlerTypes.AISummarize,
-            TaskHandlerTypes.GenerateEmbedding,
-            TaskHandlerTypes.InterestScore,
-            TaskHandlerTypes.LLMInterestEvaluationAndNotification,
-            TaskHandlerTypes.GenerateReport
-        ]);
+        // Orchestrator 启动代表上一轮主 Pipeline 已中断，入口与 worker 残留任务必须立即释放。
+        await cleanupStaleJobs(PIPELINE_STARTUP_CLEANUP_TASKS, 0);
 
         // 定义 RunPipeline 任务
         await agendaInstance

@@ -245,7 +245,55 @@ export class ImDbAccessService extends Disposable {
                     width, height, picType, originImageMd5, qqImageText,
                     status, retryCount, createdAt, updatedAt
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(mediaId) DO NOTHING`,
+                ON CONFLICT(mediaId) DO UPDATE SET
+                    sourceUrl = COALESCE(chat_message_media.sourceUrl, excluded.sourceUrl),
+                    sourcePath = COALESCE(chat_message_media.sourcePath, excluded.sourcePath),
+                    fileName = COALESCE(chat_message_media.fileName, excluded.fileName),
+                    fileSize = COALESCE(chat_message_media.fileSize, excluded.fileSize),
+                    duration = COALESCE(chat_message_media.duration, excluded.duration),
+                    width = COALESCE(chat_message_media.width, excluded.width),
+                    height = COALESCE(chat_message_media.height, excluded.height),
+                    picType = COALESCE(chat_message_media.picType, excluded.picType),
+                    originImageMd5 = COALESCE(chat_message_media.originImageMd5, excluded.originImageMd5),
+                    qqImageText = COALESCE(chat_message_media.qqImageText, excluded.qqImageText),
+                    status = CASE
+                        WHEN chat_message_media.mediaType = 'image'
+                         AND chat_message_media.status IN ('pending', 'failed', 'skipped')
+                         AND chat_message_media.sourcePath IS NULL
+                         AND excluded.sourcePath IS NOT NULL
+                        THEN 'pending'
+                        ELSE chat_message_media.status
+                    END,
+                    retryCount = CASE
+                        WHEN chat_message_media.mediaType = 'image'
+                         AND chat_message_media.status IN ('pending', 'failed', 'skipped')
+                         AND chat_message_media.sourcePath IS NULL
+                         AND excluded.sourcePath IS NOT NULL
+                        THEN 0
+                        ELSE chat_message_media.retryCount
+                    END,
+                    failReason = CASE
+                        WHEN chat_message_media.mediaType = 'image'
+                         AND chat_message_media.status IN ('pending', 'failed', 'skipped')
+                         AND chat_message_media.sourcePath IS NULL
+                         AND excluded.sourcePath IS NOT NULL
+                        THEN NULL
+                        ELSE chat_message_media.failReason
+                    END,
+                    updatedAt = CASE
+                        WHEN chat_message_media.sourceUrl IS NULL AND excluded.sourceUrl IS NOT NULL
+                          OR chat_message_media.sourcePath IS NULL AND excluded.sourcePath IS NOT NULL
+                          OR chat_message_media.fileName IS NULL AND excluded.fileName IS NOT NULL
+                          OR chat_message_media.fileSize IS NULL AND excluded.fileSize IS NOT NULL
+                          OR chat_message_media.duration IS NULL AND excluded.duration IS NOT NULL
+                          OR chat_message_media.width IS NULL AND excluded.width IS NOT NULL
+                          OR chat_message_media.height IS NULL AND excluded.height IS NOT NULL
+                          OR chat_message_media.picType IS NULL AND excluded.picType IS NOT NULL
+                          OR chat_message_media.originImageMd5 IS NULL AND excluded.originImageMd5 IS NOT NULL
+                          OR chat_message_media.qqImageText IS NULL AND excluded.qqImageText IS NOT NULL
+                        THEN excluded.updatedAt
+                        ELSE chat_message_media.updatedAt
+                    END`,
                 [
                     media.mediaId,
                     media.msgId,

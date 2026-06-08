@@ -5,6 +5,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
     const mockPipelineJob = {
         attrs: {} as {
+            repeatInterval?: string;
+            lockedAt?: Date;
+            failedAt?: Date;
+            failReason?: string;
+        },
+        schedule: vi.fn(),
+        save: vi.fn()
+    };
+    const mockPersistedPipelineJob = {
+        attrs: {} as {
+            repeatInterval?: string;
             lockedAt?: Date;
             failedAt?: Date;
             failReason?: string;
@@ -14,9 +25,11 @@ const mocks = vi.hoisted(() => {
     };
 
     mockPipelineJob.schedule.mockReturnValue(mockPipelineJob);
+    mockPersistedPipelineJob.schedule.mockReturnValue(mockPersistedPipelineJob);
 
     return {
         mockPipelineJob,
+        mockPersistedPipelineJob,
         mockAgendaEvery: vi.fn(async () => mockPipelineJob),
         mockAgendaNow: vi.fn(),
         mockAgendaCreate: vi.fn(() => ({ unique: vi.fn(() => ({ save: vi.fn().mockResolvedValue(undefined) })) })),
@@ -95,6 +108,8 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
     beforeEach(() => {
         mocks.mockPipelineJob.schedule.mockClear();
         mocks.mockPipelineJob.save.mockClear();
+        mocks.mockPersistedPipelineJob.schedule.mockClear();
+        mocks.mockPersistedPipelineJob.save.mockClear();
         mocks.mockAgendaEvery.mockClear();
         mocks.mockAgendaNow.mockClear();
         mocks.mockAgendaCreate.mockClear();
@@ -107,9 +122,13 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
         mocks.mockGetCurrentConfig.mockClear();
         mocks.mockSetupReportScheduler.mockClear();
         mocks.mockPipelineJob.attrs = {};
+        mocks.mockPersistedPipelineJob.attrs = {
+            repeatInterval: "30 minutes"
+        };
         mocks.mockPipelineJob.schedule.mockReturnValue(mocks.mockPipelineJob);
+        mocks.mockPersistedPipelineJob.schedule.mockReturnValue(mocks.mockPersistedPipelineJob);
         mocks.mockAgendaEvery.mockResolvedValue(mocks.mockPipelineJob);
-        mocks.mockAgendaJobs.mockResolvedValue([{ name: "registered" }]);
+        mocks.mockAgendaJobs.mockResolvedValue([mocks.mockPersistedPipelineJob]);
         mocks.mockScheduleAndWaitForJob.mockResolvedValue(true);
         mocks.mockGetCurrentConfig.mockResolvedValue({
             orchestrator: {
@@ -128,13 +147,18 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
         expect(mocks.mockAgendaEvery).toHaveBeenCalledWith("30 minutes", TaskHandlerTypes.RunPipeline, undefined, {
             skipImmediate: true
         });
-        expect(mocks.mockPipelineJob.schedule).toHaveBeenCalledWith(expect.any(Date));
-        expect(mocks.mockPipelineJob.save).toHaveBeenCalledTimes(1);
+        expect(mocks.mockAgendaJobs).toHaveBeenCalledWith({ name: TaskHandlerTypes.RunPipeline });
+        expect(mocks.mockPersistedPipelineJob.schedule).toHaveBeenCalledWith(expect.any(Date));
+        expect(mocks.mockPersistedPipelineJob.save).toHaveBeenCalledTimes(1);
         expect(mocks.mockAgendaNow).not.toHaveBeenCalled();
     });
 
-    it("启动立即执行应释放周期 RunPipeline 的残留锁", async () => {
+    it("启动立即执行应释放数据库中周期 RunPipeline 的残留锁", async () => {
         mocks.mockPipelineJob.attrs = {
+            failReason: "every 返回对象不代表数据库旧状态"
+        };
+        mocks.mockPersistedPipelineJob.attrs = {
+            repeatInterval: "30 minutes",
             lockedAt: new Date("2026-06-09T03:33:38.645+08:00"),
             failedAt: new Date("2026-06-09T03:29:02.927+08:00"),
             failReason: "ProvideData task failed"
@@ -142,11 +166,11 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
 
         await schedulePipelineIntervalWithStartupRun(30);
 
-        expect(mocks.mockPipelineJob.attrs.lockedAt).toBeUndefined();
-        expect(mocks.mockPipelineJob.attrs.failedAt).toBeUndefined();
-        expect(mocks.mockPipelineJob.attrs.failReason).toBeUndefined();
-        expect(mocks.mockPipelineJob.schedule).toHaveBeenCalledWith(expect.any(Date));
-        expect(mocks.mockPipelineJob.save).toHaveBeenCalledTimes(1);
+        expect(mocks.mockPersistedPipelineJob.attrs.lockedAt).toBeUndefined();
+        expect(mocks.mockPersistedPipelineJob.attrs.failedAt).toBeUndefined();
+        expect(mocks.mockPersistedPipelineJob.attrs.failReason).toBeUndefined();
+        expect(mocks.mockPersistedPipelineJob.schedule).toHaveBeenCalledWith(expect.any(Date));
+        expect(mocks.mockPersistedPipelineJob.save).toHaveBeenCalledTimes(1);
         expect(mocks.mockAgendaNow).not.toHaveBeenCalled();
     });
 
@@ -182,8 +206,14 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
             TaskHandlerTypes.LLMInterestEvaluationAndNotification
         ]);
         expect(mocks.mockCleanupStaleJobs).toHaveBeenCalledWith(
-            expect.arrayContaining([TaskHandlerTypes.ImageUnderstanding, TaskHandlerTypes.AudioTranscription])
+            expect.arrayContaining([
+                TaskHandlerTypes.RunPipeline,
+                TaskHandlerTypes.ImageUnderstanding,
+                TaskHandlerTypes.AudioTranscription
+            ]),
+            0
         );
+        expect(mocks.mockCleanupStaleJobs.mock.calls[0][0]).not.toContain(TaskHandlerTypes.GenerateReport);
         expect(mocks.mockAgendaJobs).toHaveBeenCalledWith({ name: TaskHandlerTypes.ImageUnderstanding });
         expect(mocks.mockAgendaJobs).toHaveBeenCalledWith({ name: TaskHandlerTypes.AudioTranscription });
     });
