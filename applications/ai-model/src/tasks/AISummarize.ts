@@ -23,7 +23,6 @@ import { VectorDBManagerService } from "../services/embedding/VectorDBManagerSer
 
 const OPEN_SESSION_DELAY_MS = 10 * 60 * 1000;
 const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 500;
-const CLOSED_SESSION_OVERRUN_DIAGNOSIS_LIMIT = 20;
 
 /**
  * AI 摘要任务处理器
@@ -360,9 +359,7 @@ export class AISummarizeTaskHandler {
      */
     private async _logClosedSessionOverruns(): Promise<void> {
         try {
-            const overrunStats = await this.agcDbAccessService.getClosedDigestSessionOverrunStats(
-                CLOSED_SESSION_OVERRUN_DIAGNOSIS_LIMIT
-            );
+            const overrunStats = await this.agcDbAccessService.getClosedDigestSessionOverrunStats();
 
             for (const stats of overrunStats) {
                 this.LOGGER.error(

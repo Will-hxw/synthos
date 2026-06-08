@@ -619,7 +619,7 @@ describe("AgcDbAccessService", () => {
             }
         ]);
 
-        const result = await service.getClosedDigestSessionOverrunStats(20);
+        const result = await service.getClosedDigestSessionOverrunStats();
 
         const sql = mockCommonDBService.all.mock.calls[0][0] as string;
         const params = mockCommonDBService.all.mock.calls[0][1];
@@ -628,7 +628,8 @@ describe("AgcDbAccessService", () => {
         expect(sql).toContain("INNER JOIN chat_messages cm ON cm.sessionId = s.sessionId");
         expect(sql).toContain("s.status IN ('success', 'empty')");
         expect(sql).toContain("cm.timestamp > s.timeEnd");
-        expect(params).toEqual([20]);
+        expect(sql).not.toContain("LIMIT ?");
+        expect(params).toBeUndefined();
         expect(result[0]).toMatchObject({
             sessionId: "closed-session",
             overrunMessageCount: 3

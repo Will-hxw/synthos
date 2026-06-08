@@ -845,12 +845,9 @@ export class AgcDbAccessService extends Disposable {
     /**
      * 查询已经进入终态但仍然被追加新消息的 session。
      * 该方法只用于诊断日志，不自动修复历史数据。
-     * @param limit 返回数量上限
      * @returns 终态 session 后续消息统计
      */
-    public async getClosedDigestSessionOverrunStats(limit: number): Promise<ClosedDigestSessionOverrunStats[]> {
-        const resolvedLimit = Math.max(1, Math.floor(limit));
-
+    public async getClosedDigestSessionOverrunStats(): Promise<ClosedDigestSessionOverrunStats[]> {
         return await this.db.all<ClosedDigestSessionOverrunStats>(
             `SELECT
                 s.sessionId AS sessionId,
@@ -873,9 +870,7 @@ export class AgcDbAccessService extends Disposable {
               AND s.timeEnd IS NOT NULL
               AND cm.timestamp > s.timeEnd
             GROUP BY s.sessionId, s.status, s.timeEnd
-            ORDER BY latestMessageTime DESC, s.sessionId ASC
-            LIMIT ?`,
-            [resolvedLimit]
+            ORDER BY latestMessageTime DESC, s.sessionId ASC`
         );
     }
 

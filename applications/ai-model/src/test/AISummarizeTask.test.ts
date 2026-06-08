@@ -351,7 +351,7 @@ describe("AISummarizeTaskHandler", () => {
             2_000_000
         );
 
-        expect(mockAgcDbAccessService.getClosedDigestSessionOverrunStats).toHaveBeenCalledWith(20);
+        expect(mockAgcDbAccessService.getClosedDigestSessionOverrunStats).toHaveBeenCalledWith();
         expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("closed-session"));
         expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("超出消息数=3"));
     });
