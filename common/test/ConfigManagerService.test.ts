@@ -63,6 +63,7 @@ import {
     IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT,
     IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT,
     PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT,
+    QQ_GROUP_FILE_INCLUDE_PATH_IN_MESSAGE_CONTENT_DEFAULT,
     QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT
 } from "../services/config/schemas/GlobalConfig";
 
@@ -79,6 +80,9 @@ const mockMainConfig = {
             dbKey: "test-key",
             dbPatch: {
                 enabled: false
+            },
+            groupFile: {
+                includePathInMessageContent: true
             },
             sourceReconcile: {
                 enabled: true,
@@ -436,6 +440,31 @@ describe("ConfigManagerService", () => {
 
             expect(config.dataProviders.QQ.sourceReconcile.enabled).toBe(true);
             expect(config.dataProviders.QQ.sourceReconcile.batchSize).toBe(QQ_SOURCE_RECONCILE_BATCH_SIZE_DEFAULT);
+        });
+
+        it("历史配置缺少 QQ 群文件配置时应填充默认路径输出开关", async () => {
+            const legacyConfig = {
+                ...mockMainConfig,
+                dataProviders: {
+                    QQ: {
+                        VFSExtPath: mockMainConfig.dataProviders.QQ.VFSExtPath,
+                        dbBasePath: mockMainConfig.dataProviders.QQ.dbBasePath,
+                        dbKey: mockMainConfig.dataProviders.QQ.dbKey,
+                        dbPatch: mockMainConfig.dataProviders.QQ.dbPatch,
+                        sourceReconcile: mockMainConfig.dataProviders.QQ.sourceReconcile
+                    }
+                }
+            };
+
+            process.env.SYNTHOS_CONFIG_PATH = testConfigPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(legacyConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.dataProviders.QQ.groupFile.includePathInMessageContent).toBe(
+                QQ_GROUP_FILE_INCLUDE_PATH_IN_MESSAGE_CONTENT_DEFAULT
+            );
         });
 
         it("历史配置缺少预处理历史回填配置时应填充默认消息数量", async () => {

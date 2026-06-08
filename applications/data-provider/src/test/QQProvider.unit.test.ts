@@ -18,6 +18,9 @@ const { mockConfig, mockConfigManager, mockDbMethods, mockParserMethods, mockLog
                 dbPatch: {
                     enabled: false,
                     patchSQL: ""
+                },
+                groupFile: {
+                    includePathInMessageContent: true
                 }
             }
         }
@@ -180,6 +183,9 @@ describe("QQProvider", () => {
             );
             expect(mockDbMethods.open).toHaveBeenCalledWith(
                 path.join(mockConfig.dataProviders.QQ.dbBasePath, "files_in_chat.db")
+            );
+            expect(mockDbMethods.open).toHaveBeenCalledWith(
+                path.join(mockConfig.dataProviders.QQ.dbBasePath, "rich_media.db")
             );
             expect(mockDbMethods.exec).toHaveBeenCalled();
 
@@ -535,7 +541,7 @@ describe("QQProvider", () => {
             ]);
         });
 
-        it("应正确处理文件消息", async () => {
+        it("应优先使用 protobuf 中的文件名处理文件消息", async () => {
             const mockRow = createMockDbRow();
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
@@ -553,6 +559,71 @@ describe("QQProvider", () => {
 
             expect(result).toHaveLength(1);
             expect(result[0].messageContent).toBe("[文件，文件名：test.pdf]");
+        });
+
+        it("protobuf 缺少文件名时应从 rich_media.db 补全文件名", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockImplementation((sql: string) => {
+                if (sql.includes("file_table")) {
+                    return Promise.resolve({
+                        fileName: "补全文件.docx",
+                        filePath: null
+                    });
+                }
+
+                return Promise.resolve(undefined);
+            });
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        elementId: "file-element-1",
+                        elementType: MsgElementType.FILE
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[文件，文件名：补全文件.docx]");
+            expect(mockDbMethods.get).toHaveBeenCalledWith(expect.stringContaining("file_table"), [
+                mockMsgId,
+                "file-element-1"
+            ]);
+        });
+
+        it("开启群文件路径输出时应在文件消息正文中追加完整路径", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockImplementation((sql: string) => {
+                if (sql.includes("file_table")) {
+                    return Promise.resolve({
+                        fileName: "不应覆盖.pdf",
+                        filePath: "C:/Users/test/Documents/report.pdf"
+                    });
+                }
+
+                return Promise.resolve(undefined);
+            });
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        elementId: "file-element-2",
+                        elementType: MsgElementType.FILE,
+                        fileName: "report.pdf"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe(
+                "[文件，文件名：report.pdf，路径：C:/Users/test/Documents/report.pdf]"
+            );
         });
 
         it("应从卡片消息中提取可读文本", async () => {
