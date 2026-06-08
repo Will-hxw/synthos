@@ -21,6 +21,7 @@ import { COMMON_TOKENS } from "../../di/tokens";
 import { GroupMsgColumn as GMC } from "./@types/mappers/GroupMsgColumn";
 import { RawGroupMsgFromDB } from "./@types/RawGroupMsgFromDB";
 import { MessagePBParser } from "./parsers/MessagePBParser";
+import { formatApplicationCardMessage } from "./formatters/ApplicationCardMessageFormatter";
 import { MsgElementType } from "./@types/mappers/MsgElementType";
 import { MsgElement } from "./@types/RawMsgContentParseResult";
 import { MsgType } from "./@types/mappers/MsgType";
@@ -407,7 +408,7 @@ export class QQProvider extends Disposable implements IIMProvider {
                     break;
                 }
                 case MsgElementType.CARD: {
-                    result += this._formatStructuredMessage("卡片消息", rawMsgElement.applicationMessage);
+                    result += formatApplicationCardMessage(rawMsgElement.applicationMessage);
                     break;
                 }
                 case MsgElementType.XML: {
