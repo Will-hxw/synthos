@@ -3,6 +3,7 @@ import { injectable, inject } from "tsyringe";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import getRandomHash from "@root/common/util/math/getRandomHash";
 import { ImDbAccessService } from "@root/common/services/database/ImDbAccessService";
+import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
 import { Disposable } from "@root/common/util/lifecycle/Disposable";
 import { mustInitBeforeUse } from "@root/common/util/lifecycle/mustInitBeforeUse";
 
@@ -23,7 +24,8 @@ export class TimeoutSplitter extends Disposable implements ISplitter {
      */
     public constructor(
         @inject(COMMON_TOKENS.ConfigManagerService) private configManagerService: ConfigManagerService,
-        @inject(COMMON_TOKENS.ImDbAccessService) private imDbAccessService: ImDbAccessService
+        @inject(COMMON_TOKENS.ImDbAccessService) private imDbAccessService: ImDbAccessService,
+        @inject(COMMON_TOKENS.AgcDbAccessService) private agcDbAccessService: AgcDbAccessService
     ) {
         super();
     }
@@ -44,6 +46,7 @@ export class TimeoutSplitter extends Disposable implements ISplitter {
     public async assignSessionId(groupId: string, startTimeStamp: number, endTimeStamp: number) {
         await this.imDbAccessService.init(); // TODO : 临时解决方案，确保数据库已初始化
         const config = (await this.configManagerService.getCurrentConfig()).preprocessors.TimeoutSplitter;
+        const reusableSessionCache = new Map<string, boolean>();
 
         // 获取配置的超时阈值（单位：毫秒）
         const timeoutThresholdMs = config.timeoutInMinutes * 60 * 1000;
@@ -61,6 +64,7 @@ export class TimeoutSplitter extends Disposable implements ISplitter {
                 if (i === 0) {
                     // 第一条消息：总是分配新 sessionId
                     msg.sessionId = getRandomHash(16);
+                    reusableSessionCache.set(msg.sessionId, true);
                 } else {
                     const prevMsg = msgs[i - 1];
                     const timeDiff = msg.timestamp - prevMsg.timestamp;
@@ -68,6 +72,11 @@ export class TimeoutSplitter extends Disposable implements ISplitter {
                     if (timeDiff > timeoutThresholdMs) {
                         // 超过阈值：开启新会话
                         msg.sessionId = getRandomHash(16);
+                        reusableSessionCache.set(msg.sessionId, true);
+                    } else if (!(await this._canReuseSession(prevMsg.sessionId!, reusableSessionCache))) {
+                        // 上一个 session 已进入摘要生命周期：开启新会话
+                        msg.sessionId = getRandomHash(16);
+                        reusableSessionCache.set(msg.sessionId, true);
                     } else {
                         // 未超过阈值：沿用前一条的 sessionId
                         msg.sessionId = prevMsg.sessionId!;
@@ -77,5 +86,29 @@ export class TimeoutSplitter extends Disposable implements ISplitter {
         }
 
         return msgs;
+    }
+
+    /**
+     * 判断 session 是否还能继续接收新消息。
+     * 已进入摘要生命周期的 session 不允许再追加消息，否则新消息会被终态 session 吞掉。
+     * @param sessionId 会话 ID
+     * @param reusableSessionCache 本轮任务内的查询缓存
+     */
+    private async _canReuseSession(
+        sessionId: string,
+        reusableSessionCache: Map<string, boolean>
+    ): Promise<boolean> {
+        const cached = reusableSessionCache.get(sessionId);
+
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        const processed = await this.agcDbAccessService.isSessionIdProcessed(sessionId);
+        const reusable = !processed;
+
+        reusableSessionCache.set(sessionId, reusable);
+
+        return reusable;
     }
 }

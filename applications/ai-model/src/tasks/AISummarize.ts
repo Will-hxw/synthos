@@ -81,6 +81,8 @@ export class AISummarizeTaskHandler {
                 // 收集所有需要处理的任务
                 const allTasks: PooledTask<TaskContext>[] = [];
 
+                await this._repairAndLogClosedSessionOverruns();
+
                 for (const groupId of attrs.groupIds) {
                     const readyBeforeTimestamp = attrs.endTimeStamp - OPEN_SESSION_DELAY_MS;
                     /* 1. 获取指定时间范围内的消息 */
@@ -181,6 +183,10 @@ export class AISummarizeTaskHandler {
                 this.LOGGER.info(
                     `共收集到 ${allTasks.length} 个任务，开始并行处理（并行度=${config.ai.maxConcurrentRequests}）`
                 );
+
+                if (allTasks.length === 0) {
+                    await this._logActiveDigestSessionBlocks(attrs.groupIds);
+                }
 
                 // 并行处理所有任务，每个任务完成时回调
                 let completedCount = 0;
@@ -350,6 +356,56 @@ export class AISummarizeTaskHandler {
         }
 
         candidateSessions.set(sessionId, sessionMessages);
+    }
+
+    /**
+     * 修复终态摘要 session 后续仍有新消息的异常。
+     * 修复会把超出消息迁移到新的未摘要 session，失败时中断本轮任务。
+     */
+    private async _repairAndLogClosedSessionOverruns(): Promise<void> {
+        try {
+            const repairResults = await this.agcDbAccessService.repairClosedDigestSessionOverruns();
+
+            for (const result of repairResults) {
+                this.LOGGER.warning(
+                    `已修复终态摘要 session 后续新消息: oldSessionId=${result.oldSessionId}, newSessionId=${result.newSessionId}, groupId=${result.groupId}, status=${result.status}, 摘要结束时间=${this._formatTimestamp(result.summarizedTimeEnd)}, 最新消息时间=${this._formatTimestamp(result.latestMessageTime)}, 修复消息数=${result.repairedMessageCount}`
+                );
+            }
+
+            const remainingStats = await this.agcDbAccessService.getClosedDigestSessionOverrunStats();
+
+            for (const stats of remainingStats) {
+                this.LOGGER.error(
+                    `修复后仍检测到终态摘要 session 后有新消息: sessionId=${stats.sessionId}, groupId=${stats.groupId}, status=${stats.status}, 摘要结束时间=${this._formatTimestamp(stats.summarizedTimeEnd)}, 最新消息时间=${this._formatTimestamp(stats.latestMessageTime)}, 超出消息数=${stats.overrunMessageCount}`
+                );
+            }
+        } catch (error) {
+            this.LOGGER.error(`修复终态摘要 session 追加消息失败: ${this._formatErrorMessage(error)}`);
+            throw error;
+        }
+    }
+
+    /**
+     * 记录仍在摘要保护窗口内、会暂时阻止本轮重新摘要的 session。
+     * @param groupIds 群组ID列表
+     */
+    private async _logActiveDigestSessionBlocks(groupIds: string[]): Promise<void> {
+        const blockStats = await this.imDbAccessService.getActiveDigestSessionBlockStatsByGroupIds(groupIds);
+
+        for (const stats of blockStats) {
+            this.LOGGER.warning(
+                `本轮未收集到摘要任务，但检测到 ${stats.sessionCount} 个 ${stats.status} session 仍在摘要保护窗口内，消息数=${stats.messageCount}，最早重试时间=${this._formatTimestamp(stats.earliestRetryTime)}`
+            );
+        }
+    }
+
+    /**
+     * 格式化日志中的时间戳。
+     * @param timestamp UNIX 毫秒时间戳
+     * @returns 本地时间字符串
+     */
+    private _formatTimestamp(timestamp: number): string {
+        return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
     }
 
     private _formatErrorMessage(error: unknown): string {

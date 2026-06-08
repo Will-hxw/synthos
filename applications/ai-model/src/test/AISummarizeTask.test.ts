@@ -108,13 +108,16 @@ describe("AISummarizeTaskHandler", () => {
     const mockImDbAccessService = {
         getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange: vi.fn(),
         getUnsummarizedSessionStatsByGroupId: vi.fn(),
-        getProcessedChatMessagesBySessionId: vi.fn()
+        getProcessedChatMessagesBySessionId: vi.fn(),
+        getActiveDigestSessionBlockStatsByGroupIds: vi.fn()
     };
     const mockAgcDbAccessService = {
         tryClaimSessionForDigest: vi.fn(),
         commitSessionDigest: vi.fn(),
         markSessionEmpty: vi.fn(),
-        markSessionFailed: vi.fn()
+        markSessionFailed: vi.fn(),
+        repairClosedDigestSessionOverruns: vi.fn(),
+        getClosedDigestSessionOverrunStats: vi.fn()
     };
     const mockVectorDBManagerService = {
         deleteEmbeddingsIfExists: vi.fn()
@@ -135,6 +138,7 @@ describe("AISummarizeTaskHandler", () => {
         });
         mockImDbAccessService.getProcessedChatMessageWithRawMessageByGroupIdAndTimeRange.mockResolvedValue([]);
         mockImDbAccessService.getUnsummarizedSessionStatsByGroupId.mockResolvedValue([]);
+        mockImDbAccessService.getActiveDigestSessionBlockStatsByGroupIds.mockResolvedValue([]);
         mockImDbAccessService.getProcessedChatMessagesBySessionId.mockImplementation(async (sessionId: string) => [
             createMessage(`${sessionId}-msg-1`, "group-a", sessionId, 1000)
         ]);
@@ -142,6 +146,8 @@ describe("AISummarizeTaskHandler", () => {
         mockAgcDbAccessService.commitSessionDigest.mockResolvedValue([]);
         mockAgcDbAccessService.markSessionEmpty.mockResolvedValue([]);
         mockAgcDbAccessService.markSessionFailed.mockResolvedValue(undefined);
+        mockAgcDbAccessService.repairClosedDigestSessionOverruns.mockResolvedValue([]);
+        mockAgcDbAccessService.getClosedDigestSessionOverrunStats.mockResolvedValue([]);
         mockVectorDBManagerService.deleteEmbeddingsIfExists.mockReturnValue(undefined);
         mockGenerateContent.mockImplementation((sessionId: string) =>
             JSON.stringify([{ topic: `话题 ${sessionId}`, contributors: ["发送者"], detail: "摘要详情" }])
@@ -193,7 +199,7 @@ describe("AISummarizeTaskHandler", () => {
             2_000_000
         );
 
-        expect(mockImDbAccessService.getUnsummarizedSessionStatsByGroupId).toHaveBeenCalledWith("group-a", 100);
+        expect(mockImDbAccessService.getUnsummarizedSessionStatsByGroupId).toHaveBeenCalledWith("group-a", 500);
         expect(mockSubmitTasks.mock.calls[0][0]).toHaveLength(1);
         expect(mockSubmitTasks.mock.calls[0][0][0].context.sessionId).toBe("historical-session");
         expect(mockAgcDbAccessService.commitSessionDigest).toHaveBeenCalledOnce();
@@ -327,6 +333,101 @@ describe("AISummarizeTaskHandler", () => {
             expect.stringContaining("Unexpected")
         );
         expect(mockAgcDbAccessService.commitSessionDigest).not.toHaveBeenCalled();
+    });
+
+    it("应记录终态 session 后续仍有新消息的诊断日志", async () => {
+        mockAgcDbAccessService.getClosedDigestSessionOverrunStats.mockResolvedValue([
+            {
+                sessionId: "closed-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                overrunMessageCount: 3
+            }
+        ]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
+
+        expect(mockAgcDbAccessService.getClosedDigestSessionOverrunStats).toHaveBeenCalledWith();
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("closed-session"));
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("超出消息数=3"));
+    });
+
+    it("应修复终态 session 后续仍有新消息并记录日志", async () => {
+        mockAgcDbAccessService.repairClosedDigestSessionOverruns.mockResolvedValue([
+            {
+                oldSessionId: "closed-session",
+                newSessionId: "new-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                repairedMessageCount: 3
+            }
+        ]);
+        mockAgcDbAccessService.getClosedDigestSessionOverrunStats.mockResolvedValue([]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
+
+        expect(mockAgcDbAccessService.repairClosedDigestSessionOverruns).toHaveBeenCalledWith();
+        expect(mockAgcDbAccessService.getClosedDigestSessionOverrunStats).toHaveBeenCalledWith();
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("closed-session"));
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("new-session"));
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("修复消息数=3"));
+    });
+
+    it("修复终态 session 追加消息失败时应中断任务", async () => {
+        mockAgcDbAccessService.repairClosedDigestSessionOverruns.mockRejectedValue(new Error("repair failed"));
+
+        await expect(
+            runProcessor(
+                mockConfigManagerService,
+                mockImDbAccessService,
+                mockAgcDbAccessService,
+                mockVectorDBManagerService,
+                2_000_000
+            )
+        ).rejects.toThrow("repair failed");
+
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("repair failed"));
+        expect(mockSubmitTasks).not.toHaveBeenCalled();
+    });
+
+    it("本轮无任务但存在保护窗口内 session 时应记录诊断日志", async () => {
+        mockImDbAccessService.getActiveDigestSessionBlockStatsByGroupIds.mockResolvedValue([
+            {
+                status: "processing",
+                sessionCount: 16,
+                messageCount: 1700,
+                earliestRetryTime: 2_000_000,
+                latestUpdateTime: 1_000_000
+            }
+        ]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
+
+        expect(mockImDbAccessService.getActiveDigestSessionBlockStatsByGroupIds).toHaveBeenCalledWith(["group-a"]);
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("16 个 processing session"));
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("最早重试时间"));
     });
 });
 

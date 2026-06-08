@@ -4,6 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { container } from "tsyringe";
 
 import { COMMON_TOKENS } from "../di/tokens";
+
+const { mockGetRandomHash } = vi.hoisted(() => ({
+    mockGetRandomHash: vi.fn()
+}));
+
+vi.mock("../util/math/getRandomHash", () => ({
+    default: mockGetRandomHash
+}));
+
 import { AgcDbAccessService } from "../services/database/AgcDbAccessService";
 
 describe("AgcDbAccessService", () => {
@@ -29,6 +38,7 @@ describe("AgcDbAccessService", () => {
         container.reset();
         vi.clearAllMocks();
         mockCommonDBService.init.mockResolvedValue(undefined);
+        mockGetRandomHash.mockReturnValue("new-session");
         mockCommonDBService.get.mockImplementation(async (sql: string) => {
             if (sql.includes("COUNT(*) AS incompleteCount")) {
                 return { incompleteCount: 1 };
@@ -601,6 +611,160 @@ describe("AgcDbAccessService", () => {
 
         mockCommonDBService.get.mockResolvedValueOnce({ processed: 0 });
         await expect(service.isSessionIdProcessed("s2")).resolves.toBe(false);
+    });
+
+    it("终态 session 追加消息诊断应只读查询摘要结束时间之后的消息", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValueOnce([
+            {
+                sessionId: "closed-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                overrunMessageCount: 3
+            }
+        ]);
+
+        const result = await service.getClosedDigestSessionOverrunStats();
+
+        const sql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain("FROM ai_digest_sessions s");
+        expect(sql).toContain("INNER JOIN chat_messages cm ON cm.sessionId = s.sessionId");
+        expect(sql).toContain("s.status IN ('success', 'empty')");
+        expect(sql).toContain("cm.timestamp > s.timeEnd");
+        expect(sql).not.toContain("LIMIT ?");
+        expect(params).toBeUndefined();
+        expect(result[0]).toMatchObject({
+            sessionId: "closed-session",
+            overrunMessageCount: 3
+        });
+    });
+
+    it("应将终态 session 后续消息整体迁移到新的未摘要 session", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockGetRandomHash.mockReturnValueOnce("new-success-session").mockReturnValueOnce("new-empty-session");
+        mockCommonDBService.all.mockResolvedValueOnce([
+            {
+                sessionId: "success-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                overrunMessageCount: 3
+            },
+            {
+                sessionId: "empty-session",
+                groupId: "group-b",
+                status: "empty",
+                summarizedTimeEnd: 3000,
+                latestMessageTime: 4000,
+                overrunMessageCount: 2
+            }
+        ]);
+        mockCommonDBService.get.mockResolvedValue({ used: 0 });
+
+        const result = await service.repairClosedDigestSessionOverruns();
+        const runCalls = mockCommonDBService.run.mock.calls;
+        const updateCalls = runCalls.filter(call => String(call[0]).includes("UPDATE chat_messages"));
+
+        expect(result).toEqual([
+            {
+                oldSessionId: "success-session",
+                newSessionId: "new-success-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                repairedMessageCount: 3
+            },
+            {
+                oldSessionId: "empty-session",
+                newSessionId: "new-empty-session",
+                groupId: "group-b",
+                status: "empty",
+                summarizedTimeEnd: 3000,
+                latestMessageTime: 4000,
+                repairedMessageCount: 2
+            }
+        ]);
+        expect(runCalls[0][0]).toBe("BEGIN IMMEDIATE TRANSACTION");
+        expect(runCalls.at(-1)?.[0]).toBe("COMMIT");
+        expect(updateCalls).toHaveLength(2);
+        expect(updateCalls[0][0]).toContain("timestamp > ?");
+        expect(updateCalls[0][1]).toEqual(["new-success-session", "success-session", 1000]);
+        expect(updateCalls[1][1]).toEqual(["new-empty-session", "empty-session", 3000]);
+        expect(runCalls.some(call => String(call[0]).includes("INSERT INTO ai_digest_sessions"))).toBe(false);
+        expect(runCalls.some(call => String(call[0]).includes("DELETE FROM ai_digest_results"))).toBe(false);
+        expect(runCalls.some(call => String(call[0]).includes("INSERT INTO ai_digest_results"))).toBe(false);
+    });
+
+    it("修复终态追加消息时新 sessionId 若冲突应重新生成", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockGetRandomHash.mockReturnValueOnce("used-session").mockReturnValueOnce("unique-session");
+        mockCommonDBService.all.mockResolvedValueOnce([
+            {
+                sessionId: "closed-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                overrunMessageCount: 1
+            }
+        ]);
+        mockCommonDBService.get.mockResolvedValueOnce({ used: 1 }).mockResolvedValueOnce({ used: 0 });
+
+        await service.repairClosedDigestSessionOverruns();
+
+        const updateCall = mockCommonDBService.run.mock.calls.find(call =>
+            String(call[0]).includes("UPDATE chat_messages")
+        );
+
+        expect(mockGetRandomHash).toHaveBeenCalledTimes(2);
+        expect(mockCommonDBService.get).toHaveBeenCalledTimes(2);
+        expect(updateCall?.[1]).toEqual(["unique-session", "closed-session", 1000]);
+    });
+
+    it("修复终态追加消息失败时应回滚事务", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValueOnce([
+            {
+                sessionId: "closed-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                overrunMessageCount: 1
+            }
+        ]);
+        mockCommonDBService.get.mockResolvedValue({ used: 0 });
+        mockCommonDBService.run.mockImplementation(async (sql: string) => {
+            if (sql.includes("UPDATE chat_messages")) {
+                throw new Error("update failed");
+            }
+        });
+
+        await expect(service.repairClosedDigestSessionOverruns()).rejects.toThrow("update failed");
+
+        const runSqlList = mockCommonDBService.run.mock.calls.map(call => call[0] as string);
+
+        expect(runSqlList).toContain("BEGIN IMMEDIATE TRANSACTION");
+        expect(runSqlList).toContain("ROLLBACK");
+        expect(runSqlList).not.toContain("COMMIT");
     });
 
     it("并发写事务应串行执行，避免事务交错", async () => {

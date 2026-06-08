@@ -5,6 +5,7 @@ import { ProcessedChatMessageWithRawMessage } from "@root/common/contracts/data-
 import getRandomHash from "@root/common/util/math/getRandomHash";
 import { KVStore } from "@root/common/util/KVStore";
 import { ImDbAccessService } from "@root/common/services/database/ImDbAccessService";
+import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
 import { ASSERT } from "@root/common/util/ASSERT";
 import ErrorReasons from "@root/common/contracts/ErrorReasons";
 import { Disposable } from "@root/common/util/lifecycle/Disposable";
@@ -29,7 +30,8 @@ export class AccumulativeSplitter extends Disposable implements ISplitter {
      */
     public constructor(
         @inject(COMMON_TOKENS.ConfigManagerService) private configManagerService: ConfigManagerService,
-        @inject(COMMON_TOKENS.ImDbAccessService) private imDbAccessService: ImDbAccessService
+        @inject(COMMON_TOKENS.ImDbAccessService) private imDbAccessService: ImDbAccessService,
+        @inject(COMMON_TOKENS.AgcDbAccessService) private agcDbAccessService: AgcDbAccessService
     ) {
         super();
     }
@@ -58,10 +60,12 @@ export class AccumulativeSplitter extends Disposable implements ISplitter {
         }
         await this.imDbAccessService.init(); // TODO : 临时解决方案，确保数据库已初始化
         const config = (await this.configManagerService.getCurrentConfig()).preprocessors.AccumulativeSplitter;
+        const reusableSessionCache = new Map<string, boolean>();
 
         const assignNewSessionId = async (msg: ProcessedChatMessageWithRawMessage) => {
             // 为其分配一个新的 sessionId
             msg.sessionId = getRandomHash(16); // 生成新的 sessionId
+            reusableSessionCache.set(msg.sessionId, true);
             if (config.mode === "charCount") {
                 await this.kvStore!.put(msg.sessionId!, msg.messageContent!.length); // 存储新的 sessionId 及其容量
             } else if (config.mode === "messageCount") {
@@ -88,6 +92,12 @@ export class AccumulativeSplitter extends Disposable implements ISplitter {
                     const previousMsgSessionId = msgs[index - 1].sessionId!;
 
                     ASSERT(previousMsgSessionId !== undefined); // 上一条消息的 sessionId 一定存在
+
+                    if (!(await this._canReuseSession(previousMsgSessionId, reusableSessionCache))) {
+                        await assignNewSessionId(msg);
+                        continue;
+                    }
+
                     const capacity = (await this.kvStore!.get(previousMsgSessionId))!; // 获取上一条消息的容量
 
                     ASSERT(capacity !== undefined); // capacity一定存在
@@ -120,5 +130,29 @@ export class AccumulativeSplitter extends Disposable implements ISplitter {
         }
 
         return msgs;
+    }
+
+    /**
+     * 判断 session 是否还能继续接收新消息。
+     * 已进入摘要生命周期的 session 不允许再追加消息，否则新消息会被终态 session 吞掉。
+     * @param sessionId 会话 ID
+     * @param reusableSessionCache 本轮任务内的查询缓存
+     */
+    private async _canReuseSession(
+        sessionId: string,
+        reusableSessionCache: Map<string, boolean>
+    ): Promise<boolean> {
+        const cached = reusableSessionCache.get(sessionId);
+
+        if (cached !== undefined) {
+            return cached;
+        }
+
+        const processed = await this.agcDbAccessService.isSessionIdProcessed(sessionId);
+        const reusable = !processed;
+
+        reusableSessionCache.set(sessionId, reusable);
+
+        return reusable;
     }
 }

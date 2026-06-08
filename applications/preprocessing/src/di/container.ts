@@ -4,6 +4,9 @@
  */
 import "reflect-metadata";
 import { container } from "tsyringe";
+import { getAgcDbAccessService, getImDbAccessService } from "@root/common/di/container";
+import { COMMON_TOKENS } from "@root/common/di/tokens";
+import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 
 import { PreprocessTaskHandler } from "../tasks/PreprocessTask";
 import { AccumulativeSplitter } from "../splitters/AccumulativeSplitter";
@@ -15,7 +18,14 @@ import { PREPROCESSING_TOKENS } from "./tokens";
  * 注册 AccumulativeSplitter 到 DI 容器
  */
 export function registerAccumulativeSplitter(): void {
-    container.register(PREPROCESSING_TOKENS.AccumulativeSplitter, { useClass: AccumulativeSplitter });
+    container.register(PREPROCESSING_TOKENS.AccumulativeSplitter, {
+        useFactory: dependencyContainer =>
+            new AccumulativeSplitter(
+                dependencyContainer.resolve<ConfigManagerService>(COMMON_TOKENS.ConfigManagerService),
+                getImDbAccessService(),
+                getAgcDbAccessService()
+            )
+    });
 }
 
 /**
@@ -31,7 +41,14 @@ export function getAccumulativeSplitter(): AccumulativeSplitter {
  * 注册 TimeoutSplitter 到 DI 容器
  */
 export function registerTimeoutSplitter(): void {
-    container.register(PREPROCESSING_TOKENS.TimeoutSplitter, { useClass: TimeoutSplitter });
+    container.register(PREPROCESSING_TOKENS.TimeoutSplitter, {
+        useFactory: dependencyContainer =>
+            new TimeoutSplitter(
+                dependencyContainer.resolve<ConfigManagerService>(COMMON_TOKENS.ConfigManagerService),
+                getImDbAccessService(),
+                getAgcDbAccessService()
+            )
+    });
 }
 
 /**
