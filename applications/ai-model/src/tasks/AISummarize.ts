@@ -81,6 +81,8 @@ export class AISummarizeTaskHandler {
                 // 收集所有需要处理的任务
                 const allTasks: PooledTask<TaskContext>[] = [];
 
+                await this._repairAndLogClosedSessionOverruns();
+
                 for (const groupId of attrs.groupIds) {
                     const readyBeforeTimestamp = attrs.endTimeStamp - OPEN_SESSION_DELAY_MS;
                     /* 1. 获取指定时间范围内的消息 */
@@ -181,7 +183,6 @@ export class AISummarizeTaskHandler {
                 this.LOGGER.info(
                     `共收集到 ${allTasks.length} 个任务，开始并行处理（并行度=${config.ai.maxConcurrentRequests}）`
                 );
-                await this._logClosedSessionOverruns();
 
                 // 并行处理所有任务，每个任务完成时回调
                 let completedCount = 0;
@@ -354,20 +355,29 @@ export class AISummarizeTaskHandler {
     }
 
     /**
-     * 记录终态摘要 session 后续仍有新消息的异常。
-     * 该诊断不阻断任务执行，只用于暴露“消息已入库但没有新摘要”的状态机问题。
+     * 修复终态摘要 session 后续仍有新消息的异常。
+     * 修复会把超出消息迁移到新的未摘要 session，失败时中断本轮任务。
      */
-    private async _logClosedSessionOverruns(): Promise<void> {
+    private async _repairAndLogClosedSessionOverruns(): Promise<void> {
         try {
-            const overrunStats = await this.agcDbAccessService.getClosedDigestSessionOverrunStats();
+            const repairResults = await this.agcDbAccessService.repairClosedDigestSessionOverruns();
 
-            for (const stats of overrunStats) {
+            for (const result of repairResults) {
+                this.LOGGER.warning(
+                    `已修复终态摘要 session 后续新消息: oldSessionId=${result.oldSessionId}, newSessionId=${result.newSessionId}, groupId=${result.groupId}, status=${result.status}, 摘要结束时间=${this._formatTimestamp(result.summarizedTimeEnd)}, 最新消息时间=${this._formatTimestamp(result.latestMessageTime)}, 修复消息数=${result.repairedMessageCount}`
+                );
+            }
+
+            const remainingStats = await this.agcDbAccessService.getClosedDigestSessionOverrunStats();
+
+            for (const stats of remainingStats) {
                 this.LOGGER.error(
-                    `检测到已终态摘要 session 后仍有新消息: sessionId=${stats.sessionId}, groupId=${stats.groupId}, status=${stats.status}, 摘要结束时间=${this._formatTimestamp(stats.summarizedTimeEnd)}, 最新消息时间=${this._formatTimestamp(stats.latestMessageTime)}, 超出消息数=${stats.overrunMessageCount}`
+                    `修复后仍检测到终态摘要 session 后有新消息: sessionId=${stats.sessionId}, groupId=${stats.groupId}, status=${stats.status}, 摘要结束时间=${this._formatTimestamp(stats.summarizedTimeEnd)}, 最新消息时间=${this._formatTimestamp(stats.latestMessageTime)}, 超出消息数=${stats.overrunMessageCount}`
                 );
             }
         } catch (error) {
-            this.LOGGER.error(`检查终态摘要 session 追加消息异常失败: ${this._formatErrorMessage(error)}`);
+            this.LOGGER.error(`修复终态摘要 session 追加消息失败: ${this._formatErrorMessage(error)}`);
+            throw error;
         }
     }
 

@@ -6,6 +6,7 @@ import { AIDigestResult } from "../../contracts/ai-model";
 import { Disposable } from "../../util/lifecycle/Disposable";
 import { mustInitBeforeUse } from "../../util/lifecycle/mustInitBeforeUse";
 import { COMMON_TOKENS } from "../../di/tokens";
+import getRandomHash from "../../util/math/getRandomHash";
 
 import { CommonDBService } from "./infra/CommonDBService";
 import { createAGCTableSQL } from "./constants/InitialSQL";
@@ -52,6 +53,16 @@ export interface ClosedDigestSessionOverrunStats {
     summarizedTimeEnd: number;
     latestMessageTime: number;
     overrunMessageCount: number;
+}
+
+export interface ClosedDigestSessionRepairResult {
+    oldSessionId: string;
+    newSessionId: string;
+    groupId: string;
+    status: string;
+    summarizedTimeEnd: number;
+    latestMessageTime: number;
+    repairedMessageCount: number;
 }
 
 interface AIDigestSessionRow {
@@ -844,7 +855,7 @@ export class AgcDbAccessService extends Disposable {
 
     /**
      * 查询已经进入终态但仍然被追加新消息的 session。
-     * 该方法只用于诊断日志，不自动修复历史数据。
+     * 该方法只读扫描异常数据，本身不修改历史数据。
      * @returns 终态 session 后续消息统计
      */
     public async getClosedDigestSessionOverrunStats(): Promise<ClosedDigestSessionOverrunStats[]> {
@@ -874,9 +885,81 @@ export class AgcDbAccessService extends Disposable {
         );
     }
 
-    // 获取数据消息，用于数据库迁移、导出、备份等操作
+    /**
+     * 修复已经进入终态但仍然被追加新消息的 session。
+     * 旧终态 session 和旧摘要结果保持不变，超出消息整体迁移到新的未摘要 session。
+     * @returns 终态 session 后续消息修复结果
+     */
+    public async repairClosedDigestSessionOverruns(): Promise<ClosedDigestSessionRepairResult[]> {
+        const repairResults: ClosedDigestSessionRepairResult[] = [];
+
+        await this.runExclusive(async () => {
+            await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+            try {
+                const overrunStats = await this.getClosedDigestSessionOverrunStats();
+
+                for (const stats of overrunStats) {
+                    const newSessionId = await this._generateUniqueSessionId();
+
+                    await this.db.run(
+                        `UPDATE chat_messages
+                         SET sessionId = ?
+                         WHERE sessionId = ?
+                           AND timestamp > ?`,
+                        [newSessionId, stats.sessionId, stats.summarizedTimeEnd]
+                    );
+                    repairResults.push({
+                        oldSessionId: stats.sessionId,
+                        newSessionId,
+                        groupId: stats.groupId,
+                        status: stats.status,
+                        summarizedTimeEnd: stats.summarizedTimeEnd,
+                        latestMessageTime: stats.latestMessageTime,
+                        repairedMessageCount: stats.overrunMessageCount
+                    });
+                }
+
+                await this.db.run("COMMIT");
+            } catch (err) {
+                await this.db.run("ROLLBACK");
+                throw err;
+            }
+        });
+
+        return repairResults;
+    }
+
+    /**
+     * 获取摘要结果，用于数据库迁移、导出、备份等操作。
+     */
     public async selectAll(): Promise<AIDigestResult[]> {
         return this.db.all<AIDigestResult>(`SELECT * FROM ai_digest_results`);
+    }
+
+    private async _generateUniqueSessionId(): Promise<string> {
+        while (true) {
+            const sessionId = getRandomHash(16);
+            const exists = await this._isSessionIdGloballyUsed(sessionId);
+
+            if (!exists) {
+                return sessionId;
+            }
+        }
+    }
+
+    private async _isSessionIdGloballyUsed(sessionId: string): Promise<boolean> {
+        const result = await this.db.get<{ used: number }>(
+            `SELECT EXISTS(
+                SELECT 1 FROM chat_messages WHERE sessionId = ?
+                UNION ALL
+                SELECT 1 FROM ai_digest_sessions WHERE sessionId = ?
+                UNION ALL
+                SELECT 1 FROM ai_digest_results WHERE sessionId = ?
+            ) AS used`,
+            [sessionId, sessionId, sessionId]
+        );
+
+        return (result?.used ?? 0) === 1;
     }
 
     private async _ensureAIDigestSessionColumns(): Promise<void> {

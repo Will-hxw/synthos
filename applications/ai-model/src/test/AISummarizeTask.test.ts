@@ -115,6 +115,7 @@ describe("AISummarizeTaskHandler", () => {
         commitSessionDigest: vi.fn(),
         markSessionEmpty: vi.fn(),
         markSessionFailed: vi.fn(),
+        repairClosedDigestSessionOverruns: vi.fn(),
         getClosedDigestSessionOverrunStats: vi.fn()
     };
     const mockVectorDBManagerService = {
@@ -143,6 +144,7 @@ describe("AISummarizeTaskHandler", () => {
         mockAgcDbAccessService.commitSessionDigest.mockResolvedValue([]);
         mockAgcDbAccessService.markSessionEmpty.mockResolvedValue([]);
         mockAgcDbAccessService.markSessionFailed.mockResolvedValue(undefined);
+        mockAgcDbAccessService.repairClosedDigestSessionOverruns.mockResolvedValue([]);
         mockAgcDbAccessService.getClosedDigestSessionOverrunStats.mockResolvedValue([]);
         mockVectorDBManagerService.deleteEmbeddingsIfExists.mockReturnValue(undefined);
         mockGenerateContent.mockImplementation((sessionId: string) =>
@@ -354,6 +356,52 @@ describe("AISummarizeTaskHandler", () => {
         expect(mockAgcDbAccessService.getClosedDigestSessionOverrunStats).toHaveBeenCalledWith();
         expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("closed-session"));
         expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("超出消息数=3"));
+    });
+
+    it("应修复终态 session 后续仍有新消息并记录日志", async () => {
+        mockAgcDbAccessService.repairClosedDigestSessionOverruns.mockResolvedValue([
+            {
+                oldSessionId: "closed-session",
+                newSessionId: "new-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                repairedMessageCount: 3
+            }
+        ]);
+        mockAgcDbAccessService.getClosedDigestSessionOverrunStats.mockResolvedValue([]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockImDbAccessService,
+            mockAgcDbAccessService,
+            mockVectorDBManagerService,
+            2_000_000
+        );
+
+        expect(mockAgcDbAccessService.repairClosedDigestSessionOverruns).toHaveBeenCalledWith();
+        expect(mockAgcDbAccessService.getClosedDigestSessionOverrunStats).toHaveBeenCalledWith();
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("closed-session"));
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("new-session"));
+        expect(mockLogger.warning).toHaveBeenCalledWith(expect.stringContaining("修复消息数=3"));
+    });
+
+    it("修复终态 session 追加消息失败时应中断任务", async () => {
+        mockAgcDbAccessService.repairClosedDigestSessionOverruns.mockRejectedValue(new Error("repair failed"));
+
+        await expect(
+            runProcessor(
+                mockConfigManagerService,
+                mockImDbAccessService,
+                mockAgcDbAccessService,
+                mockVectorDBManagerService,
+                2_000_000
+            )
+        ).rejects.toThrow("repair failed");
+
+        expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining("repair failed"));
+        expect(mockSubmitTasks).not.toHaveBeenCalled();
     });
 });
 
