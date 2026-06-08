@@ -36,6 +36,20 @@ const PIPELINE_WORKER_TASKS = [
 const WORKER_REGISTRATION_TIMEOUT_MS = 60 * 1000;
 const WORKER_REGISTRATION_POLL_INTERVAL_MS = 1000;
 
+export async function schedulePipelineIntervalWithStartupRun(pipelineIntervalMinutes: number): Promise<void> {
+    const pipelineJob = await agendaInstance.every(
+        pipelineIntervalMinutes + " minutes",
+        TaskHandlerTypes.RunPipeline,
+        undefined,
+        {
+            skipImmediate: true
+        }
+    );
+
+    pipelineJob.schedule(new Date());
+    await pipelineJob.save();
+}
+
 @bootstrap
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 class OrchestratorApplication {
@@ -216,10 +230,7 @@ class OrchestratorApplication {
         const pipelineIntervalMinutes = config.orchestrator.pipelineIntervalInMinutes;
 
         LOGGER.debug(`Pipeline 任务将每隔 ${pipelineIntervalMinutes} 分钟执行一次，启动时立即执行一次`);
-        await agendaInstance.every(pipelineIntervalMinutes + " minutes", TaskHandlerTypes.RunPipeline, undefined, {
-            skipImmediate: true
-        });
-        await agendaInstance.now(TaskHandlerTypes.RunPipeline);
+        await schedulePipelineIntervalWithStartupRun(pipelineIntervalMinutes);
 
         LOGGER.success("✅ Orchestrator 准备就绪，启动 Agenda 调度器");
         await agendaInstance.start();
