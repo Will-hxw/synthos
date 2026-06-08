@@ -17,10 +17,11 @@ import { setupReportScheduler } from "./schedulers/reportScheduler";
  * 1. ProvideData - 获取原始数据
  * 2. ImageUnderstanding - 图片 OCR 与图片理解
  * 3. Preprocess - 预处理数据
- * 4. AISummarize - AI 摘要生成
- * 5. GenerateEmbedding - 生成向量嵌入
- * 6. InterestScore - 计算兴趣度评分
- * 7. LLMInterestEvaluationAndNotification - LLM智能兴趣评估与邮件通知
+ * 4. AudioTranscription - 语音转文字
+ * 5. AISummarize - AI 摘要生成
+ * 6. GenerateEmbedding - 生成向量嵌入
+ * 7. InterestScore - 计算兴趣度评分
+ * 8. LLMInterestEvaluationAndNotification - LLM智能兴趣评估与邮件通知
  */
 
 // 注意：日报生成任务由 reportScheduler 负责，独立于主 Pipeline
@@ -30,6 +31,7 @@ const PIPELINE_WORKER_TASKS = [
     TaskHandlerTypes.ProvideData,
     TaskHandlerTypes.ImageUnderstanding,
     TaskHandlerTypes.Preprocess,
+    TaskHandlerTypes.AudioTranscription,
     TaskHandlerTypes.AISummarize,
     TaskHandlerTypes.GenerateEmbedding,
     TaskHandlerTypes.InterestScore,
@@ -67,6 +69,7 @@ class OrchestratorApplication {
             TaskHandlerTypes.ProvideData,
             TaskHandlerTypes.ImageUnderstanding,
             TaskHandlerTypes.Preprocess,
+            TaskHandlerTypes.AudioTranscription,
             TaskHandlerTypes.AISummarize,
             TaskHandlerTypes.GenerateEmbedding,
             TaskHandlerTypes.InterestScore,
@@ -96,7 +99,7 @@ class OrchestratorApplication {
                 const POLL_INTERVAL = 5000; // 5秒
 
                 // ==================== 步骤 1: ProvideData ====================
-                LOGGER.info("📥 [1/6] 开始执行 ProvideData 任务...");
+                LOGGER.info("📥 [1/8] 开始执行 ProvideData 任务...");
                 const provideDataSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.ProvideData,
                     {
@@ -118,7 +121,7 @@ class OrchestratorApplication {
                 await job.touch();
 
                 // ==================== 步骤 2: ImageUnderstanding ====================
-                LOGGER.info("🖼️ [2/7] 开始执行 ImageUnderstanding 任务...");
+                LOGGER.info("🖼️ [2/8] 开始执行 ImageUnderstanding 任务...");
                 const imageUnderstandingSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.ImageUnderstanding,
                     {
@@ -139,7 +142,7 @@ class OrchestratorApplication {
                 await job.touch();
 
                 // ==================== 步骤 3: Preprocess ====================
-                LOGGER.info("🔧 [3/7] 开始执行 Preprocess 任务...");
+                LOGGER.info("🔧 [3/8] 开始执行 Preprocess 任务...");
                 const preprocessSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.Preprocess,
                     {
@@ -159,8 +162,29 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 4: AISummarize ====================
-                LOGGER.info("🤖 [4/7] 开始执行 AISummarize 任务...");
+                // ==================== 步骤 4: AudioTranscription ====================
+                LOGGER.info("🎙️ [4/8] 开始执行 AudioTranscription 任务...");
+                const audioTranscriptionSuccess = await scheduleAndWaitForJob(
+                    TaskHandlerTypes.AudioTranscription,
+                    {
+                        groupIds,
+                        startTimeStamp,
+                        endTimeStamp
+                    },
+                    POLL_INTERVAL,
+                    TASK_TIMEOUT
+                );
+
+                if (!audioTranscriptionSuccess) {
+                    LOGGER.error("❌ AudioTranscription 任务失败，Pipeline 终止");
+                    job.fail("AudioTranscription task failed");
+
+                    return;
+                }
+                await job.touch();
+
+                // ==================== 步骤 5: AISummarize ====================
+                LOGGER.info("🤖 [5/8] 开始执行 AISummarize 任务...");
                 const aiSummarizeSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.AISummarize,
                     {
@@ -180,8 +204,8 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 5: GenerateEmbedding ====================
-                LOGGER.info("📐 [5/7] 开始执行 GenerateEmbedding 任务...");
+                // ==================== 步骤 6: GenerateEmbedding ====================
+                LOGGER.info("📐 [6/8] 开始执行 GenerateEmbedding 任务...");
                 const generateEmbeddingSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.GenerateEmbedding,
                     {
@@ -200,8 +224,8 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 6: InterestScore ====================
-                LOGGER.info("⭐ [6/7] 开始执行 InterestScore 任务...");
+                // ==================== 步骤 7: InterestScore ====================
+                LOGGER.info("⭐ [7/8] 开始执行 InterestScore 任务...");
                 const interestScoreSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.InterestScore,
                     {
@@ -220,8 +244,8 @@ class OrchestratorApplication {
                 }
                 await job.touch();
 
-                // ==================== 步骤 7: LLMInterestEvaluationAndNotification ====================
-                LOGGER.info("🔔 [7/7] 开始执行 LLMInterestEvaluationAndNotification 任务...");
+                // ==================== 步骤 8: LLMInterestEvaluationAndNotification ====================
+                LOGGER.info("🔔 [8/8] 开始执行 LLMInterestEvaluationAndNotification 任务...");
                 const llmInterestEvaluationSuccess = await scheduleAndWaitForJob(
                     TaskHandlerTypes.LLMInterestEvaluationAndNotification,
                     {

@@ -98,7 +98,7 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
         expect(mocks.mockAgendaNow).not.toHaveBeenCalled();
     });
 
-    it("RunPipeline 应按 ProvideData、ImageUnderstanding、Preprocess、AISummarize 顺序调度", async () => {
+    it("RunPipeline 应按 ProvideData、ImageUnderstanding、Preprocess、AudioTranscription、AISummarize 顺序调度", async () => {
         const ApplicationClass = mocks.mockBootstrap.mock.calls[0][0] as new () => { main: () => Promise<void> };
         const app = new ApplicationClass();
 
@@ -123,14 +123,16 @@ describe("schedulePipelineIntervalWithStartupRun", () => {
             TaskHandlerTypes.ProvideData,
             TaskHandlerTypes.ImageUnderstanding,
             TaskHandlerTypes.Preprocess,
+            TaskHandlerTypes.AudioTranscription,
             TaskHandlerTypes.AISummarize,
             TaskHandlerTypes.GenerateEmbedding,
             TaskHandlerTypes.InterestScore,
             TaskHandlerTypes.LLMInterestEvaluationAndNotification
         ]);
         expect(mocks.mockCleanupStaleJobs).toHaveBeenCalledWith(
-            expect.arrayContaining([TaskHandlerTypes.ImageUnderstanding])
+            expect.arrayContaining([TaskHandlerTypes.ImageUnderstanding, TaskHandlerTypes.AudioTranscription])
         );
         expect(mocks.mockAgendaJobs).toHaveBeenCalledWith({ name: TaskHandlerTypes.ImageUnderstanding });
+        expect(mocks.mockAgendaJobs).toHaveBeenCalledWith({ name: TaskHandlerTypes.AudioTranscription });
     });
 });

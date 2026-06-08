@@ -93,6 +93,14 @@ export interface ChatMessageMediaUpdate {
     incrementRetryCount?: boolean;
 }
 
+export interface ChatMessageMediaTranscriptionUpdate {
+    status: ChatMessageMedia["status"];
+    transcript?: string | null;
+    failReason?: string | null;
+    modelName?: string | null;
+    incrementRetryCount?: boolean;
+}
+
 /**
  * IM 消息数据库访问服务
  * 负责聊天消息的存储和查询
@@ -110,6 +118,7 @@ export class ImDbAccessService extends Disposable {
         // 从 DI 容器获取 CommonDBService 实例
         this.db = container.resolve<CommonDBService>(COMMON_TOKENS.CommonDBService);
         await this.db.init(createIMDBTableSQL);
+        await this._ensureChatMessageMediaColumns();
     }
 
     public async storeRawChatMessage(msg: RawChatMessage) {
@@ -219,13 +228,23 @@ export class ImDbAccessService extends Disposable {
 
         for (const media of mediaItems) {
             const hasSourceUrl = typeof media.sourceUrl === "string" && media.sourceUrl.trim().length > 0;
+            const hasSourcePath = typeof media.sourcePath === "string" && media.sourcePath.trim().length > 0;
+            const status =
+                media.mediaType === "audio"
+                    ? hasSourcePath
+                        ? "pending"
+                        : "skipped"
+                    : hasSourceUrl
+                      ? "pending"
+                      : "skipped";
 
             await this.db.run(
                 `INSERT INTO chat_message_media (
                     mediaId, msgId, groupId, timestamp, elementIndex, mediaType, sourceProvider,
-                    sourceUrl, width, height, picType, originImageMd5, qqImageText,
+                    sourceUrl, sourcePath, fileName, fileSize, duration,
+                    width, height, picType, originImageMd5, qqImageText,
                     status, retryCount, createdAt, updatedAt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mediaId) DO NOTHING`,
                 [
                     media.mediaId,
@@ -236,12 +255,16 @@ export class ImDbAccessService extends Disposable {
                     media.mediaType,
                     media.sourceProvider,
                     media.sourceUrl || null,
+                    media.sourcePath || null,
+                    media.fileName || null,
+                    media.fileSize ?? null,
+                    media.duration ?? null,
                     media.width ?? null,
                     media.height ?? null,
                     media.picType ?? null,
                     media.originImageMd5 || null,
                     media.qqImageText || null,
-                    hasSourceUrl ? "pending" : "skipped",
+                    status,
                     0,
                     now,
                     now
@@ -285,6 +308,43 @@ export class ImDbAccessService extends Disposable {
              ORDER BY m.timestamp ASC, m.msgId ASC, m.elementIndex ASC
              LIMIT ?`,
             [...uniqueGroupIds, timeStart, timeEnd, timeStart, resolvedLimit]
+        );
+    }
+
+    /**
+     * 获取当前时间范围内待语音转文字处理的音频媒体记录。
+     * @param groupIds 群组ID列表
+     * @param timeStart 起始时间戳
+     * @param timeEnd 结束时间戳
+     * @param limit 数量上限
+     * @returns 待处理音频媒体记录
+     */
+    public async getPendingAudioMediaByGroupIdsAndTimeRange(
+        groupIds: string[],
+        timeStart: number,
+        timeEnd: number,
+        limit: number
+    ): Promise<PendingChatMessageMedia[]> {
+        const uniqueGroupIds = [...new Set(groupIds)];
+
+        if (uniqueGroupIds.length === 0) {
+            return [];
+        }
+
+        const resolvedLimit = Math.max(1, Math.floor(limit));
+        const placeholders = uniqueGroupIds.map(() => "?").join(", ");
+
+        return await this.db.all<PendingChatMessageMedia>(
+            `SELECT m.*, c.messageContent AS messageContent
+             FROM chat_message_media m
+             INNER JOIN chat_messages c ON c.msgId = m.msgId
+             WHERE m.groupId IN (${placeholders})
+               AND m.createdAt BETWEEN ? AND ?
+               AND m.mediaType = 'audio'
+               AND m.status = 'pending'
+             ORDER BY m.createdAt ASC, m.timestamp ASC, m.msgId ASC, m.elementIndex ASC
+             LIMIT ?`,
+            [...uniqueGroupIds, timeStart, timeEnd, resolvedLimit]
         );
     }
 
@@ -362,6 +422,86 @@ export class ImDbAccessService extends Disposable {
                 mediaId
             ]
         );
+    }
+
+    /**
+     * 更新语音转文字处理结果。
+     * @param mediaId 媒体ID
+     * @param update 更新内容
+     */
+    public async updateChatMessageMediaTranscription(
+        mediaId: string,
+        update: ChatMessageMediaTranscriptionUpdate
+    ): Promise<void> {
+        await this.db.run(
+            `UPDATE chat_message_media
+             SET status = ?,
+                 transcript = ?,
+                 failReason = ?,
+                 modelName = ?,
+                 retryCount = retryCount + ?,
+                 updatedAt = ?
+             WHERE mediaId = ?`,
+            [
+                update.status,
+                update.transcript ?? null,
+                update.failReason ?? null,
+                update.modelName ?? null,
+                update.incrementRetryCount ? 1 : 0,
+                Date.now(),
+                mediaId
+            ]
+        );
+    }
+
+    /**
+     * 写回语音转文字结果，并同步更新消息正文与预处理文本。
+     * @param mediaId 媒体ID
+     * @param msgId 消息ID
+     * @param messageContent 新消息正文
+     * @param preProcessedContent 新预处理正文；未传入时保留旧值
+     * @param update 媒体更新内容
+     */
+    public async updateAudioTranscribedMessage(
+        mediaId: string,
+        msgId: string,
+        messageContent: string,
+        preProcessedContent: string | null,
+        update: ChatMessageMediaTranscriptionUpdate
+    ): Promise<void> {
+        await this.db.run("BEGIN IMMEDIATE TRANSACTION");
+        try {
+            await this.db.run(
+                `UPDATE chat_message_media
+                 SET status = ?,
+                     transcript = ?,
+                     failReason = ?,
+                     modelName = ?,
+                     retryCount = retryCount + ?,
+                     updatedAt = ?
+                 WHERE mediaId = ?`,
+                [
+                    update.status,
+                    update.transcript ?? null,
+                    update.failReason ?? null,
+                    update.modelName ?? null,
+                    update.incrementRetryCount ? 1 : 0,
+                    Date.now(),
+                    mediaId
+                ]
+            );
+            await this.db.run(
+                `UPDATE chat_messages
+                 SET messageContent = ?,
+                     preProcessedContent = CASE WHEN ? IS NULL THEN preProcessedContent ELSE ? END
+                 WHERE msgId = ?`,
+                [messageContent, preProcessedContent, preProcessedContent, msgId]
+            );
+            await this.db.run("COMMIT");
+        } catch (err) {
+            await this.db.run("ROLLBACK");
+            throw err;
+        }
     }
 
     /**
@@ -846,6 +986,27 @@ export class ImDbAccessService extends Disposable {
         }
 
         return result;
+    }
+
+    /**
+     * 确保历史库里的媒体表具备音频转写所需列。
+     */
+    private async _ensureChatMessageMediaColumns(): Promise<void> {
+        const columns = await this.db.all<{ name: string }>(`PRAGMA table_info(chat_message_media)`);
+        const columnNames = new Set(columns.map(column => column.name));
+        const columnSqlList: Array<{ name: string; sql: string }> = [
+            { name: "sourcePath", sql: "ALTER TABLE chat_message_media ADD COLUMN sourcePath TEXT" },
+            { name: "fileName", sql: "ALTER TABLE chat_message_media ADD COLUMN fileName TEXT" },
+            { name: "fileSize", sql: "ALTER TABLE chat_message_media ADD COLUMN fileSize INTEGER" },
+            { name: "duration", sql: "ALTER TABLE chat_message_media ADD COLUMN duration INTEGER" },
+            { name: "transcript", sql: "ALTER TABLE chat_message_media ADD COLUMN transcript TEXT" }
+        ];
+
+        for (const item of columnSqlList) {
+            if (!columnNames.has(item.name)) {
+                await this.db.run(item.sql);
+            }
+        }
     }
 
     /**

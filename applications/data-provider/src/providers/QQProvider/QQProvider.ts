@@ -1,6 +1,8 @@
 import "reflect-metadata";
 import type { QQSourceMessageCursor, QQSourceMessagePage } from "./contracts/QQSourceMessagePage";
 
+import path from "path";
+
 import { injectable, inject } from "tsyringe";
 import { ConfigManagerService } from "@root/common/services/config/ConfigManagerService";
 import { QQ_SOURCE_RECONCILE_BATCH_SIZE_MAX } from "@root/common/services/config/schemas/GlobalConfig";
@@ -54,6 +56,12 @@ interface MediaOwnerInfo {
     timestamp: number;
 }
 
+interface QQVoiceFileInfo {
+    fileName: string;
+    sourcePath: string;
+    fileSize: number | undefined;
+}
+
 /**
  * QQ 消息提供者
  * 负责从 QQNT 数据库中读取消息数据
@@ -62,6 +70,8 @@ interface MediaOwnerInfo {
 @mustInitBeforeUse
 export class QQProvider extends Disposable implements IIMProvider {
     private db: PromisifiedSQLite | null = null;
+    private filesInChatDb: PromisifiedSQLite | null = null;
+    private qqMediaRootPath = "";
     private LOGGER = Logger.withTag("QQProvider");
     private messagePBParser = this._registerDisposable(new MessagePBParser());
 
@@ -209,22 +219,12 @@ export class QQProvider extends Disposable implements IIMProvider {
         // 3. 关闭临时数据库
         await tempDb.dispose();
 
-        const dbPath = config.dbBasePath + "/nt_msg.db";
-        // 打开QQNT数据库（原地读取，不复制）
-        // @see https://docs.aaqwq.top/decrypt/decode_db.html#%E9%80%9A%E7%94%A8%E9%85%8D%E7%BD%AE%E9%80%89%E9%A1%B9
-        const db = new PromisifiedSQLite(sqlite3);
+        this.qqMediaRootPath = this._getTencentFilesRootPath(config.dbBasePath);
 
-        await db.open(dbPath);
+        const dbPath = path.join(config.dbBasePath, "nt_msg.db");
+        const db = await this._openEncryptedDatabase(dbPath, config.dbKey);
+
         this.db = this._registerDisposable(db);
-
-        // 加密相关配置
-        await db.exec(`
-            PRAGMA key = '${config.dbKey}';
-            PRAGMA cipher_page_size = 4096;
-            PRAGMA kdf_iter = 4000;
-            PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
-            PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;
-        `);
 
         // 尝试读取数据库表数量，看看解密是否成功
         const sql = `SELECT count(*) FROM sqlite_master`;
@@ -234,10 +234,45 @@ export class QQProvider extends Disposable implements IIMProvider {
         this.LOGGER.success(`解密成功，数据库表数量: ${result["count(*)"]}`);
         await stmt.finalize();
 
+        try {
+            const filesInChatDbPath = path.join(config.dbBasePath, "files_in_chat.db");
+            const filesInChatDb = await this._openEncryptedDatabase(filesInChatDbPath, config.dbKey);
+
+            this.filesInChatDb = this._registerDisposable(filesInChatDb);
+        } catch (error) {
+            this.LOGGER.warning(
+                `files_in_chat.db 打开失败，后续语音媒体将无法定位源文件：${this._formatUnknownError(error)}`
+            );
+        }
+
         // 初始化消息解析器
         await this.messagePBParser.init();
 
         this.LOGGER.success("初始化完成！");
+    }
+
+    private async _openEncryptedDatabase(dbPath: string, dbKey: string): Promise<PromisifiedSQLite> {
+        const db = new PromisifiedSQLite(sqlite3);
+
+        try {
+            await db.open(dbPath);
+            await db.exec(`
+                PRAGMA key = '${dbKey}';
+                PRAGMA cipher_page_size = 4096;
+                PRAGMA kdf_iter = 4000;
+                PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
+                PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;
+            `);
+
+            return db;
+        } catch (error) {
+            await db.dispose();
+            throw error;
+        }
+    }
+
+    private _getTencentFilesRootPath(dbBasePath: string): string {
+        return path.dirname(path.dirname(path.dirname(path.resolve(dbBasePath))));
     }
 
     /**
@@ -325,6 +360,10 @@ export class QQProvider extends Disposable implements IIMProvider {
                     break;
                 }
                 case MsgElementType.VOICE: {
+                    if (mediaOwner && !this._normalizeInlineText(rawMsgElement.pttText)) {
+                        mediaItems.push(await this._buildAudioMediaItem(rawMsgElement, mediaOwner, elementIndex));
+                    }
+
                     result += this._formatVoiceMessage(rawMsgElement);
                     break;
                 }
@@ -409,6 +448,101 @@ export class QQProvider extends Disposable implements IIMProvider {
             originImageMd5: originImageMd5 || undefined,
             qqImageText: qqImageText || undefined
         };
+    }
+
+    private async _buildAudioMediaItem(
+        element: MsgElement,
+        mediaOwner: MediaOwnerInfo,
+        elementIndex: number
+    ): Promise<RawChatMessageMedia> {
+        const voiceFileInfo = await this._resolveVoiceFileInfo(element);
+
+        return {
+            mediaId: `${mediaOwner.msgId}:${elementIndex}`,
+            msgId: mediaOwner.msgId,
+            groupId: mediaOwner.groupId,
+            timestamp: mediaOwner.timestamp,
+            elementIndex,
+            mediaType: "audio",
+            sourceProvider: "QQ",
+            sourcePath: voiceFileInfo.sourcePath || undefined,
+            fileName: voiceFileInfo.fileName || undefined,
+            fileSize: voiceFileInfo.fileSize,
+            duration: element.duration > 0 ? element.duration : undefined
+        };
+    }
+
+    private async _resolveVoiceFileInfo(element: MsgElement): Promise<QQVoiceFileInfo> {
+        const fileName = this._normalizeInlineText(element.fileName);
+        const elementSourcePath = this._normalizeQQSourcePath(element.filePath);
+
+        if (elementSourcePath) {
+            return {
+                fileName,
+                sourcePath: elementSourcePath,
+                fileSize: this._parsePositiveInteger(element.fileSize)
+            };
+        }
+
+        if (!fileName || !this.filesInChatDb) {
+            return {
+                fileName,
+                sourcePath: "",
+                fileSize: this._parsePositiveInteger(element.fileSize)
+            };
+        }
+
+        try {
+            const row = (await this.filesInChatDb.get(
+                `SELECT "45403" AS filePath, "45405" AS fileSize
+                 FROM files_in_chat_table
+                 WHERE "45402" = ?
+                 ORDER BY rowid DESC
+                 LIMIT 1`,
+                [fileName]
+            )) as
+                | {
+                      filePath: string | null;
+                      fileSize: string | number | null;
+                  }
+                | undefined;
+
+            return {
+                fileName,
+                sourcePath: this._normalizeQQSourcePath(row?.filePath || ""),
+                fileSize: this._parsePositiveInteger(row?.fileSize ?? element.fileSize)
+            };
+        } catch (error) {
+            this.LOGGER.warning(`查询语音文件路径失败，fileName=${fileName}：${this._formatUnknownError(error)}`);
+
+            return {
+                fileName,
+                sourcePath: "",
+                fileSize: this._parsePositiveInteger(element.fileSize)
+            };
+        }
+    }
+
+    private _normalizeQQSourcePath(filePath: string | null | undefined): string {
+        const normalized = this._normalizeInlineText(filePath);
+
+        if (!normalized) {
+            return "";
+        }
+
+        const normalizedPath = path.normalize(normalized);
+
+        if (!path.isAbsolute(normalizedPath)) {
+            return normalizedPath;
+        }
+
+        const relativePath = path.relative(this.qqMediaRootPath, normalizedPath);
+
+        if (!relativePath || relativePath === ".." || relativePath.startsWith(`..${path.sep}`)) {
+            return "";
+        }
+
+        return relativePath;
     }
 
     private _formatImageMessage(element: MsgElement): string {
@@ -661,6 +795,24 @@ export class QQProvider extends Disposable implements IIMProvider {
         }
 
         return `${bytes}B`;
+    }
+
+    private _parsePositiveInteger(value: unknown): number | undefined {
+        const parsed = Number(value);
+
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            return undefined;
+        }
+
+        return Math.floor(parsed);
+    }
+
+    private _formatUnknownError(error: unknown): string {
+        if (error instanceof Error) {
+            return this._truncateText(error.message, 240);
+        }
+
+        return this._truncateText(String(error), 240);
     }
 
     private _buildBracketedMessage(kind: string, parts: string[]): string {

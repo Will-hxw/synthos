@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ChatMessageMedia, RawChatMessage } from "@root/common/contracts/data-provider";
+import { ChatMessageMedia, RawChatMessage } from "@root/common/contracts/data-provider/index";
 
 import { formatMsg } from "../formatMsg";
 
@@ -52,7 +52,7 @@ describe("formatMsg", () => {
         );
 
         expect(result).toBe(
-            '("发送者"):【这条消息引用了来自"发送者"的消息: [图片，含图片链接][图片；理解：引用图片是一张课程安排截图。]】 收到'
+            '("发送者"):【这条消息引用了来自"发送者"的消息： [图片，含图片链接][图片；理解：引用图片是一张课程安排截图。]】收到'
         );
     });
 });
@@ -79,6 +79,10 @@ function createMedia(mediaId: string, msgId: string, overrides: Partial<ChatMess
         mediaType: "image",
         sourceProvider: "QQ",
         sourceUrl: "https://example.com/image.jpg",
+        sourcePath: null,
+        fileName: null,
+        fileSize: null,
+        duration: null,
         width: null,
         height: null,
         picType: null,
@@ -88,6 +92,7 @@ function createMedia(mediaId: string, msgId: string, overrides: Partial<ChatMess
         visionDescription: null,
         imageCategory: null,
         understandingText: null,
+        transcript: null,
         status: "pending",
         retryCount: 0,
         failReason: null,

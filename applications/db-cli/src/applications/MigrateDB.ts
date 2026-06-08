@@ -115,10 +115,11 @@ export class MigrateDB extends Disposable implements IApplication {
                 await newDB.run(
                     `INSERT INTO chat_message_media (
                         mediaId, msgId, groupId, timestamp, elementIndex, mediaType, sourceProvider,
-                        sourceUrl, width, height, picType, originImageMd5, qqImageText,
+                        sourceUrl, sourcePath, fileName, fileSize, duration,
+                        width, height, picType, originImageMd5, qqImageText,
                         ocrText, visionDescription, imageCategory, understandingText,
-                        status, retryCount, failReason, ocrEngine, modelName, createdAt, updatedAt
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        transcript, status, retryCount, failReason, ocrEngine, modelName, createdAt, updatedAt
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         data.mediaId,
                         data.msgId,
@@ -128,6 +129,10 @@ export class MigrateDB extends Disposable implements IApplication {
                         data.mediaType,
                         data.sourceProvider,
                         data.sourceUrl,
+                        data.sourcePath,
+                        data.fileName,
+                        data.fileSize,
+                        data.duration,
                         data.width,
                         data.height,
                         data.picType,
@@ -137,6 +142,7 @@ export class MigrateDB extends Disposable implements IApplication {
                         data.visionDescription,
                         data.imageCategory,
                         data.understandingText,
+                        data.transcript,
                         data.status,
                         data.retryCount,
                         data.failReason,

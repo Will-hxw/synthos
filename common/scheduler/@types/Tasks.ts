@@ -1,10 +1,11 @@
-import { IMTypes } from "../../contracts/data-provider";
+import { IMTypes } from "../../contracts/data-provider/index";
 import { ReportType } from "../../contracts/report";
 
 export enum TaskHandlerTypes {
     ProvideData = "ProvideData",
     ImageUnderstanding = "ImageUnderstanding",
     Preprocess = "Preprocess",
+    AudioTranscription = "AudioTranscription",
     AISummarize = "AISummarize",
     InterestScore = "InterestScore",
     LLMInterestEvaluationAndNotification = "LLMInterestEvaluationAndNotification",
@@ -24,6 +25,12 @@ export interface TaskParamsMap {
     };
 
     [TaskHandlerTypes.ImageUnderstanding]: {
+        groupIds: string[];
+        startTimeStamp: number;
+        endTimeStamp: number;
+    };
+
+    [TaskHandlerTypes.AudioTranscription]: {
         groupIds: string[];
         startTimeStamp: number;
         endTimeStamp: number;
