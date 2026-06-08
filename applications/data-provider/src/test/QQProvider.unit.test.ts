@@ -1,3 +1,5 @@
+import path from "path";
+
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import ErrorReasons from "@root/common/contracts/ErrorReasons";
 
@@ -29,6 +31,7 @@ const { mockConfig, mockConfigManager, mockDbMethods, mockParserMethods, mockLog
         exec: vi.fn().mockResolvedValue(undefined),
         prepare: vi.fn(),
         all: vi.fn(),
+        get: vi.fn(),
         dispose: vi.fn().mockResolvedValue(undefined)
     },
     mockParserMethods: {
@@ -81,6 +84,7 @@ vi.mock("@root/common/util/promisify/PromisifiedSQLite", () => {
             exec = mockDbMethods.exec;
             prepare = mockDbMethods.prepare;
             all = mockDbMethods.all;
+            get = mockDbMethods.get;
             dispose = mockDbMethods.dispose;
         }
     };
@@ -140,6 +144,7 @@ describe("QQProvider", () => {
     beforeEach(async () => {
         vi.clearAllMocks();
         mockConfigManager.getCurrentConfig.mockResolvedValue(mockConfig);
+        mockDbMethods.get.mockResolvedValue(undefined);
 
         // 设置默认的 prepare mock 返回值（用于 init 中的表数量查询）
         mockDbMethods.prepare.mockResolvedValue({
@@ -170,7 +175,12 @@ describe("QQProvider", () => {
             // 验证数据库连接流程
             expect(mockDbMethods.open).toHaveBeenCalledWith(":memory:");
             expect(mockDbMethods.loadExtension).toHaveBeenCalledWith(mockConfig.dataProviders.QQ.VFSExtPath);
-            expect(mockDbMethods.open).toHaveBeenCalledWith(mockConfig.dataProviders.QQ.dbBasePath + "/nt_msg.db");
+            expect(mockDbMethods.open).toHaveBeenCalledWith(
+                path.join(mockConfig.dataProviders.QQ.dbBasePath, "nt_msg.db")
+            );
+            expect(mockDbMethods.open).toHaveBeenCalledWith(
+                path.join(mockConfig.dataProviders.QQ.dbBasePath, "files_in_chat.db")
+            );
             expect(mockDbMethods.exec).toHaveBeenCalled();
 
             // 验证解析器初始化
@@ -420,13 +430,23 @@ describe("QQProvider", () => {
 
         it("应正确处理语音消息", async () => {
             const mockRow = createMockDbRow();
+            const qqMediaRootPath = path.dirname(
+                path.dirname(path.dirname(path.resolve(mockConfig.dataProviders.QQ.dbBasePath)))
+            );
+            const absoluteVoicePath = path.join(qqMediaRootPath, "nt_qq", "Audio", "voice.amr");
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockResolvedValue({
+                filePath: absoluteVoicePath,
+                fileSize: "12345"
+            });
             mockParserMethods.parseMessageSegment.mockReturnValue({
                 messages: [
                     {
                         messageId: "elem_1",
-                        elementType: MsgElementType.VOICE
+                        elementType: MsgElementType.VOICE,
+                        fileName: "voice.amr",
+                        duration: 5
                     }
                 ]
             });
@@ -434,7 +454,25 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].messageContent).toBe("[语音，暂无转文字]");
+            expect(result[0].messageContent).toBe("[语音，时长：5秒]");
+            expect(result[0].mediaItems).toEqual([
+                {
+                    mediaId: `${mockMsgId}:0`,
+                    msgId: mockMsgId,
+                    groupId: mockGroupId,
+                    timestamp: Math.floor(mockTimestamp / 1000) * 1000,
+                    elementIndex: 0,
+                    mediaType: "audio",
+                    sourceProvider: "QQ",
+                    sourcePath: path.join("nt_qq", "Audio", "voice.amr"),
+                    fileName: "voice.amr",
+                    fileSize: 12345,
+                    duration: 5
+                }
+            ]);
+            expect(mockDbMethods.get).toHaveBeenCalledWith(expect.stringContaining("files_in_chat_table"), [
+                "voice.amr"
+            ]);
         });
 
         it("语音消息存在转写文本时应进入消息正文", async () => {
@@ -456,6 +494,45 @@ describe("QQProvider", () => {
 
             expect(result).toHaveLength(1);
             expect(result[0].messageContent).toBe("[语音转文字：语音转写内容]");
+            expect(result[0].mediaItems).toEqual([]);
+        });
+
+        it("语音文件无法定位时应保留占位并写入可跳过的媒体元信息", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockResolvedValue(undefined);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.VOICE,
+                        fileName: "missing.amr",
+                        fileSize: "99",
+                        duration: 3
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toBe("[语音，时长：3秒]");
+            expect(result[0].mediaItems).toEqual([
+                {
+                    mediaId: `${mockMsgId}:0`,
+                    msgId: mockMsgId,
+                    groupId: mockGroupId,
+                    timestamp: Math.floor(mockTimestamp / 1000) * 1000,
+                    elementIndex: 0,
+                    mediaType: "audio",
+                    sourceProvider: "QQ",
+                    sourcePath: undefined,
+                    fileName: "missing.amr",
+                    fileSize: 99,
+                    duration: 3
+                }
+            ]);
         });
 
         it("应正确处理文件消息", async () => {

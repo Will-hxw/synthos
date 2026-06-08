@@ -56,6 +56,9 @@ vi.mock("@root/common/util/ASSERT", () => ({
 // 在 mock 之后导入类（不是单例实例）
 import { ConfigManagerService } from "../services/config/ConfigManagerService";
 import {
+    AUDIO_TRANSCRIPTION_BATCH_SIZE_DEFAULT,
+    AUDIO_TRANSCRIPTION_MAX_AUDIO_BASE64_BYTES_DEFAULT,
+    AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS_DEFAULT,
     IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT,
     IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT,
     IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT,
@@ -147,6 +150,17 @@ const mockMainConfig = {
             retryCount: 2,
             requestTimeoutMs: IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT,
             processOnlyNewMessages: true
+        },
+        audioTranscription: {
+            enabled: false,
+            baseURL: "https://token-plan-sgp.xiaomimimo.com/v1",
+            apiKey: "",
+            model: "mimo-v2.5-asr",
+            language: "zh",
+            batchSize: AUDIO_TRANSCRIPTION_BATCH_SIZE_DEFAULT,
+            maxRetryCount: 2,
+            requestTimeoutMs: AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS_DEFAULT,
+            maxAudioBase64Bytes: AUDIO_TRANSCRIPTION_MAX_AUDIO_BASE64_BYTES_DEFAULT
         },
         context: {
             backgroundKnowledge: {
@@ -470,6 +484,35 @@ describe("ConfigManagerService", () => {
             expect(config.ai.imageUnderstanding.vision.modelName).toBe("qwen3.6-flash-2026-04-16");
             expect(config.ai.imageUnderstanding.vision.apiKey).toBe("");
             expect(config.ai.imageUnderstanding.processOnlyNewMessages).toBe(true);
+        });
+
+        it("历史配置缺少语音转文字配置时应填充默认关闭配置", async () => {
+            const { audioTranscription, ...aiWithoutAudioTranscription } = mockMainConfig.ai;
+            const legacyConfig = {
+                ...mockMainConfig,
+                ai: aiWithoutAudioTranscription
+            };
+
+            void audioTranscription;
+
+            process.env.SYNTHOS_CONFIG_PATH = testConfigPath;
+            mockReadFile.mockResolvedValue(JSON.stringify(legacyConfig));
+
+            service = new ConfigManagerService();
+            const config = await service.getCurrentConfig();
+
+            expect(config.ai.audioTranscription.enabled).toBe(false);
+            expect(config.ai.audioTranscription.baseURL).toBe("https://token-plan-sgp.xiaomimimo.com/v1");
+            expect(config.ai.audioTranscription.apiKey).toBe("");
+            expect(config.ai.audioTranscription.model).toBe("mimo-v2.5-asr");
+            expect(config.ai.audioTranscription.language).toBe("zh");
+            expect(config.ai.audioTranscription.batchSize).toBe(AUDIO_TRANSCRIPTION_BATCH_SIZE_DEFAULT);
+            expect(config.ai.audioTranscription.requestTimeoutMs).toBe(
+                AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS_DEFAULT
+            );
+            expect(config.ai.audioTranscription.maxAudioBase64Bytes).toBe(
+                AUDIO_TRANSCRIPTION_MAX_AUDIO_BASE64_BYTES_DEFAULT
+            );
         });
 
         it("历史配置仅有 defaultModelName 时应迁移为默认模型列表", async () => {

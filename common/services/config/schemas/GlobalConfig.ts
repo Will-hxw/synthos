@@ -10,6 +10,9 @@ export const PREPROCESS_HISTORICAL_BACKFILL_MESSAGE_LIMIT_DEFAULT = 5000;
 export const IMAGE_UNDERSTANDING_MAX_IMAGE_BYTES_DEFAULT = 1048576;
 export const IMAGE_UNDERSTANDING_MAX_IMAGES_PER_RUN_DEFAULT = 50;
 export const IMAGE_UNDERSTANDING_REQUEST_TIMEOUT_MS_DEFAULT = 30000;
+export const AUDIO_TRANSCRIPTION_BATCH_SIZE_DEFAULT = 20;
+export const AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS_DEFAULT = 60000;
+export const AUDIO_TRANSCRIPTION_MAX_AUDIO_BASE64_BYTES_DEFAULT = 10 * 1024 * 1024;
 
 /**
  * AI 模型配置 Schema
@@ -136,6 +139,50 @@ export const ImageUnderstandingConfigSchema = z
         processOnlyNewMessages: true
     })
     .describe("图片 OCR 与图片理解配置");
+
+export const AudioTranscriptionConfigSchema = z
+    .object({
+        enabled: z.boolean().default(false).describe("是否启用语音转文字"),
+        baseURL: z
+            .string()
+            .url()
+            .default("https://token-plan-sgp.xiaomimimo.com/v1")
+            .describe("Mimo Token Plan API 基础 URL"),
+        apiKey: z.string().default("").describe("Mimo Token Plan API Key"),
+        model: z.string().default("mimo-v2.5-asr").describe("语音识别模型名称"),
+        language: z.string().default("zh").describe("ASR 语种"),
+        batchSize: z
+            .number()
+            .positive()
+            .int()
+            .default(AUDIO_TRANSCRIPTION_BATCH_SIZE_DEFAULT)
+            .describe("每轮最多处理的语音数量"),
+        maxRetryCount: z.number().int().min(0).default(2).describe("语音转文字失败后的最大重试次数"),
+        requestTimeoutMs: z
+            .number()
+            .positive()
+            .int()
+            .default(AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS_DEFAULT)
+            .describe("单次 ASR 请求超时时间"),
+        maxAudioBase64Bytes: z
+            .number()
+            .positive()
+            .int()
+            .default(AUDIO_TRANSCRIPTION_MAX_AUDIO_BASE64_BYTES_DEFAULT)
+            .describe("发送给 ASR 前的音频 data URL 最大字节数")
+    })
+    .default({
+        enabled: false,
+        baseURL: "https://token-plan-sgp.xiaomimimo.com/v1",
+        apiKey: "",
+        model: "mimo-v2.5-asr",
+        language: "zh",
+        batchSize: AUDIO_TRANSCRIPTION_BATCH_SIZE_DEFAULT,
+        maxRetryCount: 2,
+        requestTimeoutMs: AUDIO_TRANSCRIPTION_REQUEST_TIMEOUT_MS_DEFAULT,
+        maxAudioBase64Bytes: AUDIO_TRANSCRIPTION_MAX_AUDIO_BASE64_BYTES_DEFAULT
+    })
+    .describe("语音转文字配置");
 
 /**
  * 群组配置 Schema
@@ -293,6 +340,7 @@ export const GlobalConfigObjectSchema = z.object({
                 .int()
                 .describe("最大并发请求数，用于文本生成器池，太小了会导致吞吐量下降，太大了可能会被服务商限流"),
             imageUnderstanding: ImageUnderstandingConfigSchema,
+            audioTranscription: AudioTranscriptionConfigSchema,
             context: z
                 .object({
                     backgroundKnowledge: z

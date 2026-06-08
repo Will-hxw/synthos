@@ -46,6 +46,7 @@ export const SENSITIVE_FIELDS = [
     "ai.defaultModelConfig.apiKey",
     "ai.imageUnderstanding.ocr.apiKey",
     "ai.imageUnderstanding.vision.apiKey",
+    "ai.audioTranscription.apiKey",
     "webUI_Forwarder.authTokenForFE",
     "webUI_Forwarder.authTokenForBE"
 ];

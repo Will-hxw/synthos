@@ -79,6 +79,17 @@
             "requestTimeoutMs": 30000,
             "processOnlyNewMessages": true
         },
+        "audioTranscription": {
+            "enabled": false,
+            "baseURL": "https://token-plan-sgp.xiaomimimo.com/v1",
+            "apiKey": "replace-with-mimo-token-plan-api-key",
+            "model": "mimo-v2.5-asr",
+            "language": "zh",
+            "batchSize": 20,
+            "maxRetryCount": 2,
+            "requestTimeoutMs": 60000,
+            "maxAudioBase64Bytes": 10485760
+        },
         "context": {
             "backgroundKnowledge": {
                 "enabled": false,

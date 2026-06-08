@@ -6,9 +6,13 @@ export interface RawChatMessageMedia {
     groupId: string;
     timestamp: number;
     elementIndex: number;
-    mediaType: "image";
+    mediaType: "image" | "audio";
     sourceProvider: "QQ";
     sourceUrl?: string;
+    sourcePath?: string;
+    fileName?: string;
+    fileSize?: number;
+    duration?: number;
     width?: number;
     height?: number;
     picType?: number;
@@ -18,6 +22,10 @@ export interface RawChatMessageMedia {
 
 export interface ChatMessageMedia extends RawChatMessageMedia {
     sourceUrl: string | null;
+    sourcePath: string | null;
+    fileName: string | null;
+    fileSize: number | null;
+    duration: number | null;
     width: number | null;
     height: number | null;
     picType: number | null;
@@ -27,6 +35,7 @@ export interface ChatMessageMedia extends RawChatMessageMedia {
     visionDescription: string | null;
     imageCategory: string | null;
     understandingText: string | null;
+    transcript: string | null;
     status: ChatMessageMediaStatus;
     retryCount: number;
     failReason: string | null;

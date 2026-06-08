@@ -23,11 +23,18 @@ describe("ImDbAccessService", () => {
         container.registerInstance(COMMON_TOKENS.CommonDBService, mockCommonDBService as any);
     });
 
+    async function initService(service: ImDbAccessService): Promise<void> {
+        await service.init();
+        mockCommonDBService.get.mockClear();
+        mockCommonDBService.all.mockClear();
+        mockCommonDBService.run.mockClear();
+    }
+
     it("根据不存在的消息id查询raw消息时应抛错", async () => {
         mockCommonDBService.get.mockResolvedValue(undefined);
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
 
         await expect(service.getRawChatMessageByMsgId("missing-msg")).rejects.toThrow(
             "消息不存在，msgId: missing-msg"
@@ -40,7 +47,7 @@ describe("ImDbAccessService", () => {
     it("批量写入原始消息时应同时写入图片媒体元信息", async () => {
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         await service.storeRawChatMessages([
             {
                 msgId: "msg-1",
@@ -86,6 +93,10 @@ describe("ImDbAccessService", () => {
             "image",
             "QQ",
             "https://example.com/image.jpg",
+            null,
+            null,
+            null,
+            null,
             100,
             80,
             1000,
@@ -101,7 +112,7 @@ describe("ImDbAccessService", () => {
     it("无 URL 图片媒体入库时应标记为 skipped", async () => {
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         await service.storeRawChatMessages([
             {
                 msgId: "msg-1",
@@ -129,7 +140,79 @@ describe("ImDbAccessService", () => {
             String(call[0]).includes("INSERT INTO chat_message_media")
         );
 
-        expect(mediaInsertCall![1][13]).toBe("skipped");
+        expect(mediaInsertCall![1][17]).toBe("skipped");
+    });
+
+    it("音频媒体入库时应按源文件路径决定 pending 或 skipped 状态", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        await service.storeRawChatMessages([
+            {
+                msgId: "msg-1",
+                messageContent: "[语音，时长：5秒]",
+                groupId: "group-a",
+                timestamp: 1000,
+                senderId: "sender-a",
+                senderGroupNickname: "发送者",
+                senderNickname: "发送者",
+                mediaItems: [
+                    {
+                        mediaId: "msg-1:0",
+                        msgId: "msg-1",
+                        groupId: "group-a",
+                        timestamp: 1000,
+                        elementIndex: 0,
+                        mediaType: "audio",
+                        sourceProvider: "QQ",
+                        sourcePath: "Audio/voice.amr",
+                        fileName: "voice.amr",
+                        fileSize: 12345,
+                        duration: 5
+                    },
+                    {
+                        mediaId: "msg-1:1",
+                        msgId: "msg-1",
+                        groupId: "group-a",
+                        timestamp: 1000,
+                        elementIndex: 1,
+                        mediaType: "audio",
+                        sourceProvider: "QQ",
+                        fileName: "missing.amr"
+                    }
+                ]
+            }
+        ]);
+
+        const mediaInsertCalls = mockCommonDBService.run.mock.calls.filter(call =>
+            String(call[0]).includes("INSERT INTO chat_message_media")
+        );
+
+        expect(mediaInsertCalls).toHaveLength(2);
+        expect(mediaInsertCalls[0][1]).toEqual([
+            "msg-1:0",
+            "msg-1",
+            "group-a",
+            1000,
+            0,
+            "audio",
+            "QQ",
+            null,
+            "Audio/voice.amr",
+            "voice.amr",
+            12345,
+            5,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "pending",
+            0,
+            expect.any(Number),
+            expect.any(Number)
+        ]);
+        expect(mediaInsertCalls[1][1][17]).toBe("skipped");
     });
 
     it("应按群组、时间范围和 pending 状态查询待处理图片", async () => {
@@ -152,7 +235,7 @@ describe("ImDbAccessService", () => {
         ]);
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         const result = await service.getPendingImageMediaByGroupIdsAndTimeRange(
             ["group-a", "group-b", "group-a"],
             100,
@@ -172,10 +255,51 @@ describe("ImDbAccessService", () => {
         expect(result[0].mediaId).toBe("msg-1:0");
     });
 
+    it("应按群组、创建时间范围和 pending 状态查询待处理语音", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        mockCommonDBService.all.mockResolvedValue([
+            {
+                mediaId: "msg-1:0",
+                msgId: "msg-1",
+                groupId: "group-a",
+                timestamp: 1000,
+                elementIndex: 0,
+                mediaType: "audio",
+                sourceProvider: "QQ",
+                sourcePath: "Audio/voice.amr",
+                status: "pending",
+                retryCount: 0,
+                createdAt: 150,
+                updatedAt: 150,
+                messageContent: "[语音，时长：5秒]"
+            }
+        ]);
+
+        const result = await service.getPendingAudioMediaByGroupIdsAndTimeRange(
+            ["group-a", "group-b", "group-a"],
+            100,
+            200,
+            10
+        );
+
+        const sql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain("FROM chat_message_media m");
+        expect(sql).toContain("m.groupId IN (?, ?)");
+        expect(sql).toContain("m.createdAt BETWEEN ? AND ?");
+        expect(sql).toContain("m.mediaType = 'audio'");
+        expect(sql).toContain("m.status = 'pending'");
+        expect(params).toEqual(["group-a", "group-b", 100, 200, 10]);
+        expect(result[0].mediaId).toBe("msg-1:0");
+    });
+
     it("更新图片理解结果时应写入结果字段并按需递增 retryCount", async () => {
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         await service.updateChatMessageMediaUnderstanding("msg-1:0", {
             status: "pending",
             failReason: "临时失败",
@@ -202,6 +326,59 @@ describe("ImDbAccessService", () => {
         ]);
     });
 
+    it("更新语音转文字结果时应写入转写字段并按需递增 retryCount", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        await service.updateChatMessageMediaTranscription("msg-1:0", {
+            status: "failed",
+            transcript: null,
+            failReason: "临时失败",
+            modelName: "mimo-v2.5-asr",
+            incrementRetryCount: true
+        });
+
+        const sql = mockCommonDBService.run.mock.calls[0][0] as string;
+        const params = mockCommonDBService.run.mock.calls[0][1];
+
+        expect(sql).toContain("UPDATE chat_message_media");
+        expect(sql).toContain("transcript = ?");
+        expect(sql).toContain("retryCount = retryCount + ?");
+        expect(params).toEqual(["failed", null, "临时失败", "mimo-v2.5-asr", 1, expect.any(Number), "msg-1:0"]);
+    });
+
+    it("写回语音转文字结果时应在同一事务中更新媒体、正文和预处理文本", async () => {
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        await service.updateAudioTranscribedMessage("msg-1:0", "msg-1", "[语音转文字：你好]", "预处理后的你好", {
+            status: "success",
+            transcript: "你好",
+            modelName: "mimo-v2.5-asr",
+            incrementRetryCount: false
+        });
+
+        expect(mockCommonDBService.run).toHaveBeenCalledWith("BEGIN IMMEDIATE TRANSACTION");
+        expect(mockCommonDBService.run).toHaveBeenCalledWith("COMMIT");
+        expect(mockCommonDBService.run.mock.calls[1][0]).toContain("UPDATE chat_message_media");
+        expect(mockCommonDBService.run.mock.calls[1][1]).toEqual([
+            "success",
+            "你好",
+            null,
+            "mimo-v2.5-asr",
+            0,
+            expect.any(Number),
+            "msg-1:0"
+        ]);
+        expect(mockCommonDBService.run.mock.calls[2][0]).toContain("UPDATE chat_messages");
+        expect(mockCommonDBService.run.mock.calls[2][1]).toEqual([
+            "[语音转文字：你好]",
+            "预处理后的你好",
+            "预处理后的你好",
+            "msg-1"
+        ]);
+    });
+
     it("应批量查询多个群组的sessionId并保持输入顺序", async () => {
         mockCommonDBService.all.mockResolvedValue([
             { groupId: "group-b", sessionId: "session-b" },
@@ -210,7 +387,7 @@ describe("ImDbAccessService", () => {
         ]);
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         const result = await service.getSessionIdsByGroupIdsAndTimeRange(
             ["group-a", "group-b", "group-a"],
             100,
@@ -235,7 +412,7 @@ describe("ImDbAccessService", () => {
     it("回填未摘要 session 应排除已写入终态的 session", async () => {
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         await service.getUnsummarizedSessionStatsByGroupId("group-a", 10);
 
         const sql = mockCommonDBService.all.mock.calls[0][0] as string;
@@ -260,7 +437,7 @@ describe("ImDbAccessService", () => {
         ]);
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         const result = await service.getActiveDigestSessionBlockStatsByGroupIds(["group-a", "group-b", "group-a"]);
 
         const sql = mockCommonDBService.all.mock.calls[0][0] as string;
@@ -295,6 +472,9 @@ describe("ImDbAccessService", () => {
             unassignedTimeStart: 150,
             unassignedTimeEnd: 150
         });
+        const service = new ImDbAccessService();
+
+        await initService(service);
         mockCommonDBService.all
             .mockResolvedValueOnce([
                 {
@@ -319,9 +499,6 @@ describe("ImDbAccessService", () => {
                     messageContent: "未分配消息"
                 }
             ]);
-        const service = new ImDbAccessService();
-
-        await service.init();
         const result = await service.getDigestCoverageSnapshotByGroupIdAndTimeRange("group-a", 100, 200, 50);
 
         const rawSql = mockCommonDBService.get.mock.calls[0][0] as string;
@@ -353,7 +530,7 @@ describe("ImDbAccessService", () => {
         ]);
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         const result = await service.getSessionTimeDurations(["session-1", "session-2", "session-missing"]);
 
         // 单次 GROUP BY 聚合，而非逐 sessionId 查询
@@ -375,7 +552,7 @@ describe("ImDbAccessService", () => {
     it("批量查询会话时间范围传入空数组应直接返回空且不查库", async () => {
         const service = new ImDbAccessService();
 
-        await service.init();
+        await initService(service);
         const result = await service.getSessionTimeDurations([]);
 
         expect(result).toEqual([]);
