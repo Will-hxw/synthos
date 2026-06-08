@@ -30,6 +30,10 @@ describe("ImDbAccessService", () => {
         mockCommonDBService.run.mockClear();
     }
 
+    function countSqlPlaceholders(sql: unknown): number {
+        return String(sql).split("?").length - 1;
+    }
+
     it("根据不存在的消息id查询raw消息时应抛错", async () => {
         mockCommonDBService.get.mockResolvedValue(undefined);
         const service = new ImDbAccessService();
@@ -84,6 +88,7 @@ describe("ImDbAccessService", () => {
         expect(mockCommonDBService.run).toHaveBeenCalledWith("BEGIN IMMEDIATE TRANSACTION");
         expect(mockCommonDBService.run).toHaveBeenCalledWith("COMMIT");
         expect(mediaInsertCall).toBeDefined();
+        expect(countSqlPlaceholders(mediaInsertCall![0])).toBe(mediaInsertCall![1].length);
         expect(mediaInsertCall![1]).toEqual([
             "msg-1:0",
             "msg-1",
