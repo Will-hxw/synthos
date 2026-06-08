@@ -603,6 +603,38 @@ describe("AgcDbAccessService", () => {
         await expect(service.isSessionIdProcessed("s2")).resolves.toBe(false);
     });
 
+    it("终态 session 追加消息诊断应只读查询摘要结束时间之后的消息", async () => {
+        const service = new AgcDbAccessService();
+
+        await service.init();
+        vi.clearAllMocks();
+        mockCommonDBService.all.mockResolvedValueOnce([
+            {
+                sessionId: "closed-session",
+                groupId: "group-a",
+                status: "success",
+                summarizedTimeEnd: 1000,
+                latestMessageTime: 2000,
+                overrunMessageCount: 3
+            }
+        ]);
+
+        const result = await service.getClosedDigestSessionOverrunStats(20);
+
+        const sql = mockCommonDBService.all.mock.calls[0][0] as string;
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain("FROM ai_digest_sessions s");
+        expect(sql).toContain("INNER JOIN chat_messages cm ON cm.sessionId = s.sessionId");
+        expect(sql).toContain("s.status IN ('success', 'empty')");
+        expect(sql).toContain("cm.timestamp > s.timeEnd");
+        expect(params).toEqual([20]);
+        expect(result[0]).toMatchObject({
+            sessionId: "closed-session",
+            overrunMessageCount: 3
+        });
+    });
+
     it("并发写事务应串行执行，避免事务交错", async () => {
         const service = new AgcDbAccessService();
 

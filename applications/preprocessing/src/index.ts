@@ -1,11 +1,13 @@
 import "reflect-metadata";
 import { ImDbAccessService } from "@root/common/services/database/ImDbAccessService";
+import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
 import Logger from "@root/common/util/Logger";
 import { agendaInstance } from "@root/common/scheduler/agenda";
 import {
     registerConfigManagerService,
     registerCommonDBService,
-    registerImDbAccessService
+    registerImDbAccessService,
+    registerAgcDbAccessService
 } from "@root/common/di/container";
 import { bootstrap, bootstrapAll } from "@root/common/util/lifecycle/bootstrap";
 
@@ -37,9 +39,13 @@ class PreprocessingApplication {
         const imDbAccessService = new ImDbAccessService();
 
         await imDbAccessService.init();
+        const agcDbAccessService = new AgcDbAccessService();
 
-        // 3. 注册 ImDbAccessService 到 DI 容器
+        await agcDbAccessService.init();
+
+        // 3. 注册数据库访问服务到 DI 容器
         registerImDbAccessService(imDbAccessService);
+        registerAgcDbAccessService(agcDbAccessService);
 
         // 4. 注册分割器
         registerAccumulativeSplitter();

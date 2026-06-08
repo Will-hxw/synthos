@@ -183,7 +183,7 @@
         "dbBasePath": "./data"
     },
     "orchestrator": {
-        "pipelineIntervalInMinutes": 60,
+        "pipelineIntervalInMinutes": 240,
         "dataSeekTimeWindowInHours": 24
     },
     "webUI_Forwarder": {

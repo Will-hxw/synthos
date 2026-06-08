@@ -45,6 +45,15 @@ export interface AIDigestSessionClaimMetadata {
     timeEnd: number;
 }
 
+export interface ClosedDigestSessionOverrunStats {
+    sessionId: string;
+    groupId: string;
+    status: string;
+    summarizedTimeEnd: number;
+    latestMessageTime: number;
+    overrunMessageCount: number;
+}
+
 interface AIDigestSessionRow {
     status: AIDigestSessionStatus | string;
     updateTime: number;
@@ -831,6 +840,43 @@ export class AgcDbAccessService extends Disposable {
         );
 
         return (result?.processed ?? 0) === 1;
+    }
+
+    /**
+     * 查询已经进入终态但仍然被追加新消息的 session。
+     * 该方法只用于诊断日志，不自动修复历史数据。
+     * @param limit 返回数量上限
+     * @returns 终态 session 后续消息统计
+     */
+    public async getClosedDigestSessionOverrunStats(limit: number): Promise<ClosedDigestSessionOverrunStats[]> {
+        const resolvedLimit = Math.max(1, Math.floor(limit));
+
+        return await this.db.all<ClosedDigestSessionOverrunStats>(
+            `SELECT
+                s.sessionId AS sessionId,
+                COALESCE((
+                    SELECT cm2.groupId
+                    FROM chat_messages cm2
+                    WHERE cm2.sessionId = s.sessionId
+                      AND cm2.groupId IS NOT NULL
+                      AND cm2.groupId <> ''
+                    ORDER BY cm2.timestamp DESC
+                    LIMIT 1
+                ), '') AS groupId,
+                s.status AS status,
+                s.timeEnd AS summarizedTimeEnd,
+                MAX(cm.timestamp) AS latestMessageTime,
+                COUNT(*) AS overrunMessageCount
+            FROM ai_digest_sessions s
+            INNER JOIN chat_messages cm ON cm.sessionId = s.sessionId
+            WHERE s.status IN ('success', 'empty')
+              AND s.timeEnd IS NOT NULL
+              AND cm.timestamp > s.timeEnd
+            GROUP BY s.sessionId, s.status, s.timeEnd
+            ORDER BY latestMessageTime DESC, s.sessionId ASC
+            LIMIT ?`,
+            [resolvedLimit]
+        );
     }
 
     // 获取数据消息，用于数据库迁移、导出、备份等操作

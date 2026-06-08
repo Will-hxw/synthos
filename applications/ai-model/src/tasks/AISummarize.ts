@@ -23,6 +23,7 @@ import { VectorDBManagerService } from "../services/embedding/VectorDBManagerSer
 
 const OPEN_SESSION_DELAY_MS = 10 * 60 * 1000;
 const UNSUMMARIZED_SESSION_BACKFILL_LIMIT = 500;
+const CLOSED_SESSION_OVERRUN_DIAGNOSIS_LIMIT = 20;
 
 /**
  * AI 摘要任务处理器
@@ -181,6 +182,7 @@ export class AISummarizeTaskHandler {
                 this.LOGGER.info(
                     `共收集到 ${allTasks.length} 个任务，开始并行处理（并行度=${config.ai.maxConcurrentRequests}）`
                 );
+                await this._logClosedSessionOverruns();
 
                 // 并行处理所有任务，每个任务完成时回调
                 let completedCount = 0;
@@ -350,6 +352,35 @@ export class AISummarizeTaskHandler {
         }
 
         candidateSessions.set(sessionId, sessionMessages);
+    }
+
+    /**
+     * 记录终态摘要 session 后续仍有新消息的异常。
+     * 该诊断不阻断任务执行，只用于暴露“消息已入库但没有新摘要”的状态机问题。
+     */
+    private async _logClosedSessionOverruns(): Promise<void> {
+        try {
+            const overrunStats = await this.agcDbAccessService.getClosedDigestSessionOverrunStats(
+                CLOSED_SESSION_OVERRUN_DIAGNOSIS_LIMIT
+            );
+
+            for (const stats of overrunStats) {
+                this.LOGGER.error(
+                    `检测到已终态摘要 session 后仍有新消息: sessionId=${stats.sessionId}, groupId=${stats.groupId}, status=${stats.status}, 摘要结束时间=${this._formatTimestamp(stats.summarizedTimeEnd)}, 最新消息时间=${this._formatTimestamp(stats.latestMessageTime)}, 超出消息数=${stats.overrunMessageCount}`
+                );
+            }
+        } catch (error) {
+            this.LOGGER.error(`检查终态摘要 session 追加消息异常失败: ${this._formatErrorMessage(error)}`);
+        }
+    }
+
+    /**
+     * 格式化日志中的时间戳。
+     * @param timestamp UNIX 毫秒时间戳
+     * @returns 本地时间字符串
+     */
+    private _formatTimestamp(timestamp: number): string {
+        return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
     }
 
     private _formatErrorMessage(error: unknown): string {
