@@ -41,6 +41,16 @@ export class SQLQueryTool {
     }
 
     /**
+     * 剔除 SQL 中的字符串字面量（单引号与双引号包裹的内容），
+     * 用于危险关键字检测前的预处理，避免把字面量中的词（如 LIKE '%update%'）误判为关键字。
+     * 仅用于安全检查，不改变实际执行的 SQL。
+     */
+    private _stripStringLiterals(sql: string): string {
+        // 处理 SQL 标准的转义：单引号内的 '' 表示一个字面单引号。
+        return sql.replace(/'(?:[^']|'')*'/g, " ").replace(/"(?:[^"]|"")*"/g, " ");
+    }
+
+    /**
      * 规范化查询条数上限。
      */
     private _normalizeLimit(limit: unknown): number {
@@ -154,9 +164,14 @@ export class SQLQueryTool {
 
                 // 检查危险关键字
                 const dangerousKeywords = ["drop", "delete", "update", "insert", "alter", "create", "truncate"];
+                // 先剔除字符串字面量，避免把出现在 LIKE '%update%' 等字面量中的词误判为关键字；
+                // 再按单词边界匹配，避免 substring 误杀（如 "created_at" 含 "create"）。
+                const queryWithoutLiterals = this._stripStringLiterals(normalizedQuery);
 
                 for (const keyword of dangerousKeywords) {
-                    if (normalizedQuery.includes(keyword)) {
+                    const keywordPattern = new RegExp(`\\b${keyword}\\b`);
+
+                    if (keywordPattern.test(queryWithoutLiterals)) {
                         throw new Error(`不允许使用关键字: ${keyword.toUpperCase()}`);
                     }
                 }

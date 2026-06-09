@@ -57,6 +57,40 @@ describe("Agent工具输入校验", () => {
         expect(all).not.toHaveBeenCalled();
     });
 
+    it("sql_query应允许危险词仅出现在字符串字面量中的查询", async () => {
+        const all = vi.fn().mockResolvedValue([]);
+        const tool = new SQLQueryTool({ db: { all } } as any);
+        const executor = tool.getExecutor();
+
+        await executor(
+            { query: "SELECT * FROM chat_messages WHERE messageContent LIKE '%update%' LIMIT 5" } as any,
+            {} as any
+        );
+
+        expect(all).toHaveBeenCalled();
+    });
+
+    it("sql_query应允许列名包含危险词子串的查询", async () => {
+        const all = vi.fn().mockResolvedValue([]);
+        const tool = new SQLQueryTool({ db: { all } } as any);
+        const executor = tool.getExecutor();
+
+        await executor({ query: "SELECT created_at FROM reports LIMIT 5" } as any, {} as any);
+
+        expect(all).toHaveBeenCalled();
+    });
+
+    it("sql_query应拒绝真正使用危险关键字的查询", async () => {
+        const all = vi.fn().mockResolvedValue([]);
+        const tool = new SQLQueryTool({ db: { all } } as any);
+        const executor = tool.getExecutor();
+
+        await expect(
+            executor({ query: "SELECT * FROM chat_messages; DELETE FROM chat_messages" } as any, {} as any)
+        ).rejects.toThrow("不允许使用关键字: DELETE");
+        expect(all).not.toHaveBeenCalled();
+    });
+
     it("rag_search缺少query时应返回明确错误", async () => {
         const tool = new RagSearchTool({} as any, {} as any, {} as any);
         const executor = tool.getExecutor();
