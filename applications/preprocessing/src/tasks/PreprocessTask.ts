@@ -142,10 +142,21 @@ export class PreprocessTaskHandler {
                     return;
                 }
 
-                quotedMessages.set(
-                    message.quotedMsgId,
-                    await this.imDbAccessService.getRawChatMessageByMsgId(message.quotedMsgId)
-                );
+                // 引用的原始消息可能不在本地库（例如引用了拉取窗口之外的历史消息），
+                // getRawChatMessageByMsgId 此时会抛错。这里降级为跳过该引用，
+                // 避免单条缺失让整批预处理失败、进而终止 pipeline。
+                // formatMsg 在 quotedMsg 缺失时会回退使用 result.quotedMsgContent。
+                const quotedMsg = await this.imDbAccessService
+                    .getRawChatMessageByMsgId(message.quotedMsgId)
+                    .catch(error => {
+                        this.LOGGER.warning(`引用消息 ${message.quotedMsgId} 不可用，已跳过该引用：${error}`);
+
+                        return undefined;
+                    });
+
+                if (quotedMsg) {
+                    quotedMessages.set(message.quotedMsgId, quotedMsg);
+                }
             })
         );
 
