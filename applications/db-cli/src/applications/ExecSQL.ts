@@ -12,14 +12,14 @@ export class ExecSQL extends Disposable implements IApplication {
     public static readonly description = "交互式执行SQL语句（输入 e 退出）";
 
     LOGGER = Logger.withTag("执行SQL");
+    // 注册为 disposable，由 db-cli 的 runApplication 在 finally 中级联 dispose，避免 SQLite 连接泄漏。
+    private imDbAccessService: ImDbAccessService = this._registerDisposable(new ImDbAccessService());
 
-    public async init() {}
+    public async init() {
+        await this.imDbAccessService.init();
+    }
 
     public async run() {
-        const imDbAccessService = new ImDbAccessService();
-
-        await imDbAccessService.init();
-
         while (true) {
             const sql = await ConsoleInputService.readEntireLine("请输入SQL语句：");
 
@@ -27,7 +27,7 @@ export class ExecSQL extends Disposable implements IApplication {
                 if (sql.trim().toLowerCase() === "e") {
                     break;
                 }
-                const res = await imDbAccessService.execQuerySQL(sql);
+                const res = await this.imDbAccessService.execQuerySQL(sql);
 
                 this.LOGGER.info(`执行结果：${JSON.stringify(res, null, 2)}`);
             } catch (e) {

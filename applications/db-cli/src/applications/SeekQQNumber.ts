@@ -59,19 +59,20 @@ export class SeekQQNumber extends Disposable implements IApplication {
     public static readonly description = "从消息内容中筛选出包含9-10位QQ号的记录";
 
     private LOGGER = Logger.withTag("筛选QQ号");
+    // 注册为 disposable，由 db-cli 的 runApplication 在 finally 中级联 dispose，避免 SQLite 连接泄漏。
+    private imDbAccessService: ImDbAccessService = this._registerDisposable(new ImDbAccessService());
 
-    public async init() {}
+    public async init() {
+        await this.imDbAccessService.init();
+    }
 
     public async run() {
-        const imDbAccessService = new ImDbAccessService();
-
-        await imDbAccessService.init();
         // 使用SQL先过滤出messageContent不为空的记录
         // SQLite中可以用GLOB模式来初步筛选包含数字的内容
         const sql = `
-            SELECT messageContent 
-            FROM chat_messages 
-            WHERE messageContent IS NOT NULL 
+            SELECT messageContent
+            FROM chat_messages
+            WHERE messageContent IS NOT NULL
               AND messageContent != ''
               AND (
                   messageContent GLOB '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*'
@@ -79,7 +80,7 @@ export class SeekQQNumber extends Disposable implements IApplication {
         `;
 
         this.LOGGER.info("正在查询数据库...");
-        const rows = await imDbAccessService.execQuerySQL(sql);
+        const rows = await this.imDbAccessService.execQuerySQL(sql);
 
         this.LOGGER.info(`初步筛选出 ${rows.length} 条记录，正在精确筛选...`);
 
