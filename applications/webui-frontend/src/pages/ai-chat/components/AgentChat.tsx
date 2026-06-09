@@ -284,8 +284,26 @@ export const AgentChat: React.FC<AgentChatProps> = ({ conversationId, sessionId,
 
                     return;
                 }
-                setMessages(prev => [...resp.data, ...prev]);
-                setHistoryHasMore(resp.data.length >= 20);
+
+                // 按 id 去重：若后端 before 为闭区间，游标那条消息会被重复返回，
+                // 直接前插会产生重复 key。以本批是否有新消息决定是否还有更多。
+                let appendedCount = 0;
+
+                setMessages(prev => {
+                    const existingIds = new Set(prev.map(m => m.id));
+                    const fresh = resp.data.filter(m => !existingIds.has(m.id));
+
+                    appendedCount = fresh.length;
+
+                    if (fresh.length === 0) {
+                        return prev;
+                    }
+
+                    return [...fresh, ...prev];
+                });
+
+                // 整批都是已存在消息说明已到顶；否则按是否拉满一页判断
+                setHistoryHasMore(appendedCount > 0 && resp.data.length >= 20);
             }
         } catch (err) {
             console.error("加载更多 Agent 历史消息失败:", err);

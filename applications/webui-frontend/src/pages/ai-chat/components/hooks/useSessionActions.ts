@@ -1,6 +1,6 @@
 import type { AiChatTab, AskResponse, ReferenceItem } from "@/types/index";
 
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 import { getSessionDetail } from "@/api/ragChatHistoryApi";
 
@@ -49,18 +49,34 @@ export function useSessionActions({
     setActiveTab,
     setMobileDrawerOpen
 }: UseSessionActionsOptions) {
+    // 会话详情请求序号：丢弃过期响应，避免快速切换会话时后返回的请求覆盖当前选中
+    const selectRequestIdRef = useRef(0);
+
     const handleSelectSession = useCallback(
         async (sessionId: string | null, options?: SelectSessionOptions) => {
+            const requestId = ++selectRequestIdRef.current;
+
             setSelectedSessionId(sessionId);
             setSelectedAgentConversationId(undefined);
             stopAsk();
 
             if (!sessionId) {
+                // 清空当前问答结果，避免删除/取消选中后主面板残留旧会话内容
+                setQuestion("");
+                setAskResponse(null);
+                setCurrentSessionIsFailed(false);
+                setCurrentSessionFailReason("");
+
                 return;
             }
 
             try {
                 const response = await getSessionDetail(sessionId);
+
+                // 已有更新的选择请求发出，丢弃本次过期响应
+                if (selectRequestIdRef.current !== requestId) {
+                    return;
+                }
 
                 if (!response.success || !response.data) {
                     return;
