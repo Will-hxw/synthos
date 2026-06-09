@@ -75,6 +75,8 @@ export default function ReportsPage() {
 
     // 待删除定时器（reportId -> timer），用于“延迟真删 + 可撤销”
     const pendingDeletesRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+    const listRevisionRef = useRef<number>(0);
+    const totalRef = useRef<number>(0);
 
     // 邮件功能相关状态
     const [emailEnabled, setEmailEnabled] = useState<boolean>(false);
@@ -82,6 +84,10 @@ export default function ReportsPage() {
 
     // 标记是否已从URL初始化
     const [isInitializedFromUrl, setIsInitializedFromUrl] = useState<boolean>(false);
+
+    useEffect(() => {
+        totalRef.current = total;
+    }, [total]);
 
     // 从URL参数初始化状态
     useEffect(() => {
@@ -195,32 +201,43 @@ export default function ReportsPage() {
     }, [viewMode, selectedType, page, selectedDate, selectedReport, isInitializedFromUrl, setSearchParams]);
 
     // 加载日报列表
-    const fetchReports = useCallback(async () => {
-        setLoading(true);
-        try {
-            const type = selectedType === "all" ? undefined : selectedType;
-            const favoriteOnly = favoriteFilter === "favorite";
-            const response = await getReportsPaginated(page, pageSize, type, favoriteOnly);
+    const fetchReports = useCallback(
+        async (options?: { silent?: boolean }) => {
+            const silent = options?.silent ?? false;
 
-            if (response.success) {
-                setReports(response.data.reports);
-                setTotal(response.data.total);
-            } else {
+            if (!silent) {
+                setLoading(true);
+            }
+            try {
+                const type = selectedType === "all" ? undefined : selectedType;
+                const favoriteOnly = favoriteFilter === "favorite";
+                const response = await getReportsPaginated(page, pageSize, type, favoriteOnly);
+
+                if (response.success) {
+                    setReports(response.data.reports);
+                    setTotal(response.data.total);
+                    totalRef.current = response.data.total;
+                    listRevisionRef.current += 1;
+                } else {
+                    Notification.error({
+                        title: "加载失败",
+                        description: "无法获取日报列表"
+                    });
+                }
+            } catch (error) {
+                console.error("获取日报列表失败:", error);
                 Notification.error({
                     title: "加载失败",
                     description: "无法获取日报列表"
                 });
+            } finally {
+                if (!silent) {
+                    setLoading(false);
+                }
             }
-        } catch (error) {
-            console.error("获取日报列表失败:", error);
-            Notification.error({
-                title: "加载失败",
-                description: "无法获取日报列表"
-            });
-        } finally {
-            setLoading(false);
-        }
-    }, [page, pageSize, selectedType, favoriteFilter]);
+        },
+        [page, pageSize, selectedType, favoriteFilter]
+    );
 
     // 加载指定日期的日报
     const fetchReportsByDate = useCallback(async (date: CalendarDate) => {
@@ -408,6 +425,31 @@ export default function ReportsPage() {
     // 计算总页数
     const totalPages = Math.ceil(total / pageSize);
 
+    const getListContextKey = useCallback(() => {
+        return `${viewMode}:${page}:${pageSize}:${selectedType}:${favoriteFilter}`;
+    }, [viewMode, page, pageSize, selectedType, favoriteFilter]);
+
+    const removeReportFromCurrentListPage = useCallback(
+        async (reportId: string) => {
+            const nextTotal = Math.max(0, totalRef.current - 1);
+            const nextTotalPages = Math.ceil(nextTotal / pageSize);
+            const nextPage = Math.max(1, Math.min(page, nextTotalPages || 1));
+
+            totalRef.current = nextTotal;
+            setReports(prev => prev.filter(r => r.reportId !== reportId));
+            setTotal(nextTotal);
+
+            if (nextPage !== page) {
+                setPage(nextPage);
+
+                return;
+            }
+
+            await fetchReports({ silent: true });
+        },
+        [fetchReports, page, pageSize]
+    );
+
     // 日历日期变化
     const handleDateChange = (date: CalendarDate) => {
         setSelectedDate(date);
@@ -500,9 +542,8 @@ export default function ReportsPage() {
                 // 当前处于“仅收藏”筛选时，取消收藏后从列表移除该卡片
                 if (favoriteFilter === "favorite") {
                     console.log(`[Reports] 处于仅收藏筛选，从列表移除取消收藏的卡片: reportId=${reportId}`);
-                    setReports(prev => prev.filter(r => r.reportId !== reportId));
+                    await removeReportFromCurrentListPage(reportId);
                     setDateReports(prev => prev.filter(r => r.reportId !== reportId));
-                    setTotal(prev => Math.max(0, prev - 1));
                 }
             } else {
                 await markReportAsFavorite(reportId);
@@ -573,11 +614,20 @@ export default function ReportsPage() {
         // 记录被删卡片的快照，用于撤销恢复
         const removedFromList = reports.find(r => r.reportId === reportId);
         const removedFromDate = dateReports.find(r => r.reportId === reportId);
+        const removedListContextKey = getListContextKey();
+        const removedListRevision = listRevisionRef.current;
+        const removedDateKey = `${selectedDate.year}-${selectedDate.month}-${selectedDate.day}`;
 
         // 乐观移除
         setReports(prev => prev.filter(r => r.reportId !== reportId));
         setDateReports(prev => prev.filter(r => r.reportId !== reportId));
-        setTotal(prev => Math.max(0, prev - 1));
+        setTotal(prev => {
+            const nextTotal = Math.max(0, prev - 1);
+
+            totalRef.current = nextTotal;
+
+            return nextTotal;
+        });
 
         const UNDO_TIMEOUT = 5000;
         const toastKey = addToast({
@@ -603,11 +653,19 @@ export default function ReportsPage() {
                             pendingDeletesRef.current.delete(reportId);
                         }
 
-                        if (removedFromList) {
-                            setReports(prev => (prev.some(r => r.reportId === reportId) ? prev : [...prev, removedFromList].sort((a, b) => b.timeEnd - a.timeEnd)));
-                            setTotal(prev => prev + 1);
+                        if (removedFromList && listRevisionRef.current === removedListRevision) {
+                            setTotal(prev => {
+                                const nextTotal = prev + 1;
+
+                                totalRef.current = nextTotal;
+
+                                return nextTotal;
+                            });
                         }
-                        if (removedFromDate) {
+                        if (removedFromList && listRevisionRef.current === removedListRevision && getListContextKey() === removedListContextKey) {
+                            setReports(prev => (prev.some(r => r.reportId === reportId) ? prev : [...prev, removedFromList].sort((a, b) => b.timeEnd - a.timeEnd)));
+                        }
+                        if (removedFromDate && `${selectedDate.year}-${selectedDate.month}-${selectedDate.day}` === removedDateKey) {
                             setDateReports(prev => (prev.some(r => r.reportId === reportId) ? prev : [...prev, removedFromDate].sort((a, b) => a.timeStart - b.timeStart)));
                         }
 
