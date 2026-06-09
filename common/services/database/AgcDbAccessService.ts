@@ -71,6 +71,21 @@ interface AIDigestSessionRow {
     processingStartedAt: number | null;
 }
 
+/**
+ * `ai_digest_sessions` 表的完整行结构，用于迁移、导出、备份等需要保留全部列的场景。
+ */
+export interface AIDigestSessionRecord {
+    sessionId: string;
+    status: AIDigestSessionStatus | string;
+    topicCount: number;
+    updateTime: number;
+    processingStartedAt: number | null;
+    failReason: string | null;
+    messageCount: number | null;
+    timeStart: number | null;
+    timeEnd: number | null;
+}
+
 interface LatestTopicFastPathRow extends LatestTopicRecord {
     total: number;
 }
@@ -934,6 +949,37 @@ export class AgcDbAccessService extends Disposable {
      */
     public async selectAll(): Promise<AIDigestResult[]> {
         return this.db.all<AIDigestResult>(`SELECT * FROM ai_digest_results`);
+    }
+
+    /**
+     * 分页读取 `ai_digest_results` 全部列，用于数据库迁移等需流式处理避免全量载入内存的场景。
+     * @param limit 分页大小
+     * @param offset 偏移量
+     */
+    public async selectAllResultsPaged(limit: number, offset: number): Promise<AIDigestResult[]> {
+        return this.db.all<AIDigestResult>(
+            `SELECT topicId, sessionId, topic, contributors, detail, modelName, updateTime
+             FROM ai_digest_results
+             ORDER BY topicId ASC
+             LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
+    }
+
+    /**
+     * 读取 `ai_digest_sessions` 全表，用于数据库迁移、导出、备份等操作。
+     * @param limit 分页大小
+     * @param offset 偏移量
+     */
+    public async selectAllSessions(limit: number, offset: number): Promise<AIDigestSessionRecord[]> {
+        return this.db.all<AIDigestSessionRecord>(
+            `SELECT sessionId, status, topicCount, updateTime, processingStartedAt,
+                    failReason, messageCount, timeStart, timeEnd
+             FROM ai_digest_sessions
+             ORDER BY sessionId ASC
+             LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
     }
 
     private async _generateUniqueSessionId(): Promise<string> {

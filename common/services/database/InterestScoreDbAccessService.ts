@@ -10,6 +10,18 @@ import { createInterestScoreTableSQL } from "./constants/InitialSQL";
 import { CommonDBService } from "./infra/CommonDBService";
 
 /**
+ * `interset_score_results` 表的完整行结构，用于迁移、导出、备份等需要保留全部分数列的场景。
+ */
+export interface InterestScoreRecord {
+    topicId: string;
+    scoreV1: number | null;
+    scoreV2: number | null;
+    scoreV3: number | null;
+    scoreV4: number | null;
+    scoreV5: number | null;
+}
+
+/**
  * 兴趣评分数据库访问服务
  * 负责兴趣评分结果的存储和查询
  */
@@ -149,5 +161,20 @@ export class InterestScoreDbAccessService extends Disposable {
     // 获取所有数据，用于数据库迁移、导出、备份等操作
     public async selectAll(): Promise<{ topicId: string; scoreV1: number | null }[]> {
         return this.db.all<{ topicId: string; scoreV1: number | null }>(`SELECT * FROM interset_score_results`);
+    }
+
+    /**
+     * 分页读取兴趣评分全部列，用于数据库迁移、导出、备份等需要保留 scoreV1~scoreV5 的场景。
+     * @param limit 分页大小
+     * @param offset 偏移量
+     */
+    public async selectAllPaged(limit: number, offset: number): Promise<InterestScoreRecord[]> {
+        return this.db.all<InterestScoreRecord>(
+            `SELECT topicId, scoreV1, scoreV2, scoreV3, scoreV4, scoreV5
+             FROM interset_score_results
+             ORDER BY topicId ASC
+             LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
     }
 }

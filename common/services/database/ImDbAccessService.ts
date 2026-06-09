@@ -1586,6 +1586,34 @@ export class ImDbAccessService extends Disposable {
         );
     }
 
+    /**
+     * 分页读取 chat_messages，用于数据库迁移等需流式处理避免全量载入内存的场景。
+     * 以主键 msgId 排序保证翻页稳定，无需再做去重（msgId 为主键）。
+     * @param limit 分页大小
+     * @param offset 偏移量
+     */
+    public async selectChatMessagesPaged(
+        limit: number,
+        offset: number
+    ): Promise<ProcessedChatMessageWithRawMessage[]> {
+        return this.db.all<ProcessedChatMessageWithRawMessage>(
+            `SELECT * FROM chat_messages ORDER BY msgId ASC LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
+    }
+
+    /**
+     * 分页读取 chat_message_media，用于数据库迁移等需流式处理避免全量载入内存的场景。
+     * @param limit 分页大小
+     * @param offset 偏移量
+     */
+    public async selectChatMessageMediaPaged(limit: number, offset: number): Promise<ChatMessageMedia[]> {
+        return this.db.all<ChatMessageMedia>(
+            `SELECT * FROM chat_message_media ORDER BY mediaId ASC LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
+    }
+
     public execQuerySQL(sql: string, params: any[] = []): Promise<any[]> {
         return this.db.all(sql, params);
     }
