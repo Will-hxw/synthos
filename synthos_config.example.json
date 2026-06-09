@@ -269,7 +269,7 @@
             "monthlyDayOfMonth": 1
         },
         "generation": {
-            "topNTopics": 2000,
+            "topNTopics": 3000,
             "interestScoreThreshold": 0,
             "llmRetryCount": 5,
             "aiModels": ["example-model"]
