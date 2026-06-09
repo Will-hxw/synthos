@@ -1416,6 +1416,34 @@ describe("QQProvider", () => {
             expect(result[0].msgId).toBe("missing-msg");
             expect(result[0].messageContent).toBe("补漏消息");
         });
+
+        it("单条消息抛出非预期错误时应跳过该条并继续处理其余消息", async () => {
+            const badRow = createMockDbRow({ [GMC.msgId]: "bad-msg" });
+            const goodRow = createMockDbRow({ [GMC.msgId]: "good-msg" });
+
+            mockDbMethods.all.mockResolvedValue([badRow, goodRow]);
+            // 第一条解析抛出非预期错误（非 PROTOBUF/EMPTY），第二条正常解析。
+            mockParserMethods.parseMessageSegment
+                .mockImplementationOnce(() => {
+                    throw new Error("unexpected decode failure");
+                })
+                .mockReturnValue({
+                    messages: [
+                        {
+                            messageId: "elem_1",
+                            elementType: MsgElementType.TEXT,
+                            messageText: "正常消息"
+                        }
+                    ]
+                });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            // 坏消息被跳过，整批不应抛错，好消息正常返回。
+            expect(result).toHaveLength(1);
+            expect(result[0].msgId).toBe("good-msg");
+            expect(result[0].messageContent).toBe("正常消息");
+        });
     });
 
     describe("引用消息处理", () => {

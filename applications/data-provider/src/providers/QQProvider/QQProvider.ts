@@ -50,6 +50,7 @@ interface QQMessageParseStats {
     forwardMergedXmlFallbackCount: number;
     forwardMergedParseFailureCount: number;
     forwardMergedNestedTruncatedCount: number;
+    unexpectedParseErrorCount: number;
 }
 
 interface ParsedMessageContent {
@@ -177,7 +178,7 @@ export class QQProvider extends Disposable implements IIMProvider {
             const results = await this.db.all(sql, params);
 
             for (const result of results) {
-                const processedMsg = await this._parseRawGroupMsgRow(result, stats);
+                const processedMsg = await this._safeParseRawGroupMsgRow(result, stats);
 
                 if (processedMsg) {
                     messages.push(processedMsg);
@@ -345,7 +346,8 @@ export class QQProvider extends Disposable implements IIMProvider {
             forwardMergedExpandedCount: 0,
             forwardMergedXmlFallbackCount: 0,
             forwardMergedParseFailureCount: 0,
-            forwardMergedNestedTruncatedCount: 0
+            forwardMergedNestedTruncatedCount: 0,
+            unexpectedParseErrorCount: 0
         };
     }
 
@@ -373,6 +375,36 @@ export class QQProvider extends Disposable implements IIMProvider {
             this.LOGGER.info(
                 `合并转发解析统计：seen=${stats.forwardMergedSeenCount}，expanded=${stats.forwardMergedExpandedCount}，xmlFallback=${stats.forwardMergedXmlFallbackCount}，parseFailure=${stats.forwardMergedParseFailureCount}，nestedTruncated=${stats.forwardMergedNestedTruncatedCount}`
             );
+        }
+        if (stats.unexpectedParseErrorCount > 0) {
+            this.LOGGER.error(
+                `跳过 ${stats.unexpectedParseErrorCount} 条因非预期错误解析失败的消息（已容错，不影响本批其余消息）。`
+            );
+        }
+    }
+
+    /**
+     * 安全解析单条消息行：捕获 `_parseRawGroupMsgRow` 冒泡出的非预期错误（如底层 DB 句柄异常），
+     * 记录并跳过该条消息，避免单条失败拖垮整批拉取乃至终止整条 pipeline。
+     * 注意：PROTOBUF_ERROR / EMPTY_VALUE_ERROR 等已在 `_parseRawGroupMsgRow` 内部兜底为占位内容，
+     * 不会走到这里。
+     * @param result QQNT 原始消息行
+     * @param stats 解析统计
+     * @returns 解析成功的消息；保留类型被排除或解析失败时返回 null
+     */
+    private async _safeParseRawGroupMsgRow(
+        result: RawGroupMsgFromDB,
+        stats: QQMessageParseStats
+    ): Promise<RawChatMessage | null> {
+        try {
+            return await this._parseRawGroupMsgRow(result, stats);
+        } catch (error) {
+            stats.unexpectedParseErrorCount++;
+            this.LOGGER.warning(
+                `解析消息失败已跳过，msgId=${result?.[GMC.msgId]}：${this._formatUnknownError(error)}`
+            );
+
+            return null;
         }
     }
 
@@ -1385,7 +1417,7 @@ export class QQProvider extends Disposable implements IIMProvider {
             const stats = this._createParseStats();
 
             for (const result of results) {
-                const processedMsg = await this._parseRawGroupMsgRow(result, stats);
+                const processedMsg = await this._safeParseRawGroupMsgRow(result, stats);
 
                 if (processedMsg) {
                     messages.push(processedMsg);
