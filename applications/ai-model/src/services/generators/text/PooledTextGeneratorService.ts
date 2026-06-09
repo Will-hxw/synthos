@@ -45,6 +45,8 @@ export class PooledTextGeneratorService extends Disposable {
     private readonly taskQueue: Array<{
         task: () => Promise<void>;
         resolve: () => void;
+        /** 任务在执行前被取消（如 dispose）时调用，用于写入失败结果/触发回调，避免静默缺口 */
+        onCancel: () => void | Promise<void>;
     }> = [];
 
     private runningTasks = 0;
@@ -52,7 +54,6 @@ export class PooledTextGeneratorService extends Disposable {
 
     private readonly semaphoreQueue: Array<() => void> = [];
     private readonly LOGGER = Logger.withTag("PooledTextGeneratorService");
-
     /**
      * 构造函数
      * @param maxConcurrency 最大并发数
@@ -71,14 +72,24 @@ export class PooledTextGeneratorService extends Disposable {
     public async init(): Promise<void> {
         // 从 DI 容器获取已初始化的 TextGeneratorService
         this.TextGeneratorService = container.resolve<TextGeneratorService>(AI_MODEL_TOKENS.TextGeneratorService);
-        this._registerDisposableFunction(() => {
-            // 清空等待中的任务：立即 resolve 但标记为失败
-            for (const { resolve } of this.taskQueue) {
-                // 注意：results 已由 task closure 捕获，我们只需让 Promise 完成
-                resolve();
-            }
-            this.taskQueue.length = 0;
+        this._registerDisposableFunction(async () => {
+            // 清空等待中的任务：先为每个未启动任务写入“已取消”失败结果并触发回调，
+            // 再 resolve 其 Promise。否则调用方按完成计数收集结果时会留下静默的 null 缺口。
+            const pending = this.taskQueue.splice(0, this.taskQueue.length);
+
             this.semaphoreQueue.length = 0;
+
+            for (const { onCancel, resolve } of pending) {
+                try {
+                    await onCancel();
+                } catch (cancelError) {
+                    this.LOGGER.error(
+                        `任务取消处理失败: ${cancelError instanceof Error ? cancelError.message : String(cancelError)}`
+                    );
+                } finally {
+                    resolve();
+                }
+            }
         });
     }
 
@@ -160,6 +171,17 @@ export class PooledTextGeneratorService extends Disposable {
         for (const taskDef of tasks) {
             taskPromises.push(
                 new Promise<void>(resolve => {
+                    // 统一的回调派发：成功/失败/取消都经此触发一次 onTaskComplete。
+                    const emitResult = async (result: PooledTaskResult<TContext>) => {
+                        try {
+                            await onTaskComplete(result);
+                        } catch (callbackError) {
+                            this.LOGGER.error(
+                                `回调函数执行失败: ${callbackError instanceof Error ? callbackError.message : String(callbackError)}`
+                            );
+                        }
+                    };
+
                     const task = async () => {
                         let result: PooledTaskResult<TContext>;
 
@@ -190,16 +212,18 @@ export class PooledTextGeneratorService extends Disposable {
                         }
 
                         // 立即回调
-                        try {
-                            await onTaskComplete(result);
-                        } catch (callbackError) {
-                            this.LOGGER.error(
-                                `回调函数执行失败: ${callbackError instanceof Error ? callbackError.message : String(callbackError)}`
-                            );
-                        }
+                        await emitResult(result);
                     };
 
-                    this.taskQueue.push({ task, resolve });
+                    // 被取消时同样回调一次失败结果，避免调用方按完成计数收集时出现缺口。
+                    const onCancel = () =>
+                        emitResult({
+                            isSuccess: false,
+                            error: new Error("任务在执行前被取消（服务已释放）"),
+                            context: taskDef.context
+                        });
+
+                    this.taskQueue.push({ task, resolve, onCancel });
                     // 仅在加入任务后尝试调度一次（安全且必要）
                     this.processQueue();
                 })
@@ -261,7 +285,18 @@ export class PooledTextGeneratorService extends Disposable {
                         }
                     };
 
-                    this.taskQueue.push({ task, resolve });
+                    this.taskQueue.push({
+                        task,
+                        resolve,
+                        // 被取消时写入失败结果，避免该输入对应的槽位残留 null。
+                        onCancel: () => {
+                            results[inputIndex] = {
+                                isSuccess: false,
+                                error: new Error("任务在执行前被取消（服务已释放）"),
+                                inputIndex
+                            };
+                        }
+                    });
                     // 仅在加入任务后尝试调度一次（安全且必要）
                     this.processQueue();
                 })

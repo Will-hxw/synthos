@@ -766,6 +766,59 @@ describe("PooledTextGeneratorService", () => {
             // 第二次 dispose 不应该抛出错误
             expect(() => generator.dispose()).not.toThrow();
         });
+
+        it("dispose 时应为排队中的 submitTasks 任务回调取消结果而非静默丢弃", async () => {
+            // maxConcurrency=1，确保后续任务滞留队列；dispose 后这些任务应收到失败回调。
+            generator = new PooledTextGeneratorService(1);
+            await generator.init();
+
+            interface TestContext {
+                id: number;
+            }
+
+            const tasks: PooledTask<TestContext>[] = Array.from({ length: 5 }, (_, i) => ({
+                input: `SLOW_task_${i}`,
+                modelNames: ["model1"],
+                context: { id: i }
+            }));
+
+            const results: PooledTaskResult<TestContext>[] = [];
+            const submitPromise = generator.submitTasks<TestContext>(tasks, result => {
+                results.push(result);
+            });
+
+            // 等待第一个任务开始执行，其余仍在排队，然后立即释放。
+            await delay(10);
+            await generator.dispose();
+            await submitPromise;
+
+            // 每个任务都应恰好回调一次（成功或被取消），不留静默缺口。
+            expect(results.length).toBe(5);
+            const ids = results.map(r => r.context.id).sort((a, b) => a - b);
+
+            expect(ids).toEqual([0, 1, 2, 3, 4]);
+            // 被取消的任务应标记为失败并带 error。
+            expect(results.some(r => !r.isSuccess && r.error !== undefined)).toBe(true);
+        });
+
+        it("dispose 时 generateText 的排队任务结果槽位应填失败而非 null", async () => {
+            generator = new PooledTextGeneratorService(1);
+            await generator.init();
+
+            const inputs = ["SLOW_a", "SLOW_b", "SLOW_c", "SLOW_d"];
+            const modelNames = ["model1"];
+
+            const resultsPromise = generator.generateTextWithModelCandidates(modelNames, inputs);
+
+            await delay(10);
+            await generator.dispose();
+            const results = await resultsPromise;
+
+            // 不应有 null 缺口，每个槽位都有结果对象。
+            expect(results.length).toBe(4);
+            expect(results.every(r => r !== null)).toBe(true);
+            expect(results.every(r => typeof r.isSuccess === "boolean")).toBe(true);
+        });
     });
 
     describe("并发控制精确性", () => {
