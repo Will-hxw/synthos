@@ -88,7 +88,7 @@ export class GenerateReportTaskHandler {
                         timeEnd
                     );
 
-                    // 2. 获取兴趣度评分，过滤掉负分话题
+                    // 2. 获取兴趣度评分，半日报全量入报，周报/月报继续按配置筛选
                     const interestScores = new Map<string, number>();
 
                     for (const result of digestResults) {
@@ -99,16 +99,18 @@ export class GenerateReportTaskHandler {
                         }
                     }
 
-                    // 过滤掉兴趣度低于阈值的话题（若不存在兴趣度评分，则保留）
                     const interestScoreThreshold = config.report.generation.interestScoreThreshold;
-                    const filteredResults = digestResults.filter(result => {
-                        const score = interestScores.get(result.topicId);
-
-                        return score === undefined || score >= interestScoreThreshold;
-                    });
+                    const topN = config.report.generation.topNTopics;
+                    const selectedResults = this._selectReportTopics(
+                        reportType,
+                        digestResults,
+                        interestScores,
+                        interestScoreThreshold,
+                        topN
+                    );
 
                     // 3. 检查是否有话题
-                    if (filteredResults.length === 0) {
+                    if (selectedResults.length === 0) {
                         this.LOGGER.info(`${periodDescription} 没有有效话题，生成空日报`);
 
                         const emptyReport: Report = {
@@ -140,22 +142,11 @@ export class GenerateReportTaskHandler {
                         return;
                     }
 
-                    // 4. 按兴趣度排序，取 Top N
-                    const topN = config.report.generation.topNTopics;
-                    const sortedResults = [...filteredResults]
-                        .sort((a, b) => {
-                            const scoreA = interestScores.get(a.topicId) ?? 0;
-                            const scoreB = interestScores.get(b.topicId) ?? 0;
-
-                            return scoreB - scoreA;
-                        })
-                        .slice(0, topN);
-
                     // 5. 计算统计数据
-                    const statistics = this.calculateStatistics(sortedResults);
+                    const statistics = this.calculateStatistics(selectedResults);
 
                     // 6. 准备话题数据给 LLM
-                    const topicsData = sortedResults.map(r => ({
+                    const topicsData = selectedResults.map(r => ({
                         topic: r.topic,
                         detail: r.detail
                     }));
@@ -175,7 +166,7 @@ export class GenerateReportTaskHandler {
                             summaryStatus: "pending",
                             model: "",
                             statistics,
-                            topicIds: sortedResults.map(r => r.topicId),
+                            topicIds: selectedResults.map(r => r.topicId),
                             createdAt: reportCreatedAt,
                             updatedAt: Date.now()
                         };
@@ -234,7 +225,7 @@ export class GenerateReportTaskHandler {
                         summaryStatus,
                         model: selectedModelName,
                         statistics,
-                        topicIds: sortedResults.map(r => r.topicId),
+                        topicIds: selectedResults.map(r => r.topicId),
                         createdAt: reportCreatedAt,
                         updatedAt: Date.now()
                     };
@@ -261,6 +252,36 @@ export class GenerateReportTaskHandler {
                 lockLifetime: 10 * 60 * 1000 // 10分钟
             }
         );
+    }
+
+    /**
+     * 选择本次报告要纳入的全部话题。
+     */
+    private _selectReportTopics(
+        reportType: ReportType,
+        digestResults: LatestTopicRecord[],
+        interestScores: Map<string, number>,
+        interestScoreThreshold: number,
+        topN: number
+    ): LatestTopicRecord[] {
+        const sortedResults = [...digestResults].sort((a, b) => {
+            const scoreA = interestScores.get(a.topicId) ?? 0;
+            const scoreB = interestScores.get(b.topicId) ?? 0;
+
+            return scoreB - scoreA;
+        });
+
+        if (reportType === "half-daily") {
+            return sortedResults;
+        }
+
+        return sortedResults
+            .filter(result => {
+                const score = interestScores.get(result.topicId);
+
+                return score === undefined || score >= interestScoreThreshold;
+            })
+            .slice(0, topN);
     }
 
     /**

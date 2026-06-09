@@ -30,6 +30,7 @@ export class ReportPromptStore {
 
         const activeGroupsStr =
             statistics.mostActiveGroups.length > 0 ? statistics.mostActiveGroups.join("、") : "暂无";
+        const requirements = ReportPromptStore._getReportSummaryRequirements(reportType);
 
         root.setChildNodes([
             new CtxTemplateNode()
@@ -48,21 +49,7 @@ export class ReportPromptStore {
                     ])
                 ),
             new CtxTemplateNode().setTitle("话题列表").setContentText(topicsList),
-            new CtxTemplateNode()
-                .setTitle("要求")
-                .setContentText(
-                    ContentUtils.orderedList([
-                        "概括本时段的主要讨论内容和热点话题",
-                        "突出最有价值、最有信息量的讨论点",
-                        "语言简洁流畅，易于阅读",
-                        "使用 Markdown 格式",
-                        "不要重复罗列所有话题，而是提炼出核心要点",
-                        "如果引用了某个话题的内容，请在句子末尾标注来源，格式类似：[话题7] [话题11] [话题23]",
-                        "标注中的数字 N 为 1-based，并严格对应上方“话题列表”的序号（第 N 条话题即 [话题N]）",
-                        "如果话题较少或没有特别值得关注的内容，可以简短概括",
-                        "请直接输出综述文本，不要添加任何前缀或后缀说明"
-                    ])
-                )
+            new CtxTemplateNode().setTitle("要求").setContentText(ContentUtils.orderedList(requirements))
         ]);
 
         return root;
@@ -73,5 +60,37 @@ export class ReportPromptStore {
      */
     public static getEmptyReportText(periodDescription: string): string {
         return `${periodDescription}暂无热门话题讨论。`;
+    }
+
+    /**
+     * 获取不同报告类型的综述要求。
+     * @param reportType 报告类型
+     */
+    private static _getReportSummaryRequirements(reportType: "half-daily" | "weekly" | "monthly"): string[] {
+        const commonRequirements = [
+            "语言简洁流畅，易于阅读",
+            "使用 Markdown 格式",
+            "如果引用了某个话题的内容，请在句子末尾标注来源，格式类似：[话题7] [话题11] [话题23]",
+            "标注中的数字 N 为 1-based，并严格对应上方“话题列表”的序号（第 N 条话题即 [话题N]）",
+            "请直接输出综述文本，不要添加任何前缀或后缀说明"
+        ];
+
+        if (reportType === "half-daily") {
+            return [
+                "必须覆盖“话题列表”中的每一条话题，不得省略、合并丢失或只抽取部分话题",
+                "每条话题都要详细说明具体事件、结论、关键数字、链接、截止时间、后续动作等有信息量的内容",
+                "可以按主题聚合相近话题，但聚合段落中必须明确写到被覆盖的每个话题，并保留对应来源标注",
+                "如果某条话题信息量较少，也要单独交代其核心内容和上下文，不要直接略过",
+                ...commonRequirements
+            ];
+        }
+
+        return [
+            "概括本时段的主要讨论内容和热点话题",
+            "突出最有价值、最有信息量的讨论点",
+            "不要重复罗列所有话题，而是提炼出核心要点",
+            "如果话题较少或没有特别值得关注的内容，可以简短概括",
+            ...commonRequirements
+        ];
     }
 }

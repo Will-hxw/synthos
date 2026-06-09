@@ -1,6 +1,6 @@
 import "reflect-metadata";
 
-import type { Report, ReportSummaryStatus } from "@root/common/contracts/report/index";
+import type { Report, ReportSummaryStatus, ReportType } from "@root/common/contracts/report/index";
 import type { LatestTopicRecord } from "@root/common/services/database/AgcDbAccessService";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -221,6 +221,109 @@ describe("GenerateReportTaskHandler", () => {
         expect(report.statistics.mostActiveGroups).toEqual(["unknown"]);
     });
 
+    it("半日报应包含时间范围内所有话题，不按兴趣阈值过滤也不按 topN 截断", async () => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValue({
+            report: {
+                enabled: true,
+                generation: {
+                    topNTopics: 2,
+                    interestScoreThreshold: 0.5,
+                    llmRetryCount: 0,
+                    aiModels: ["mock-model"]
+                }
+            },
+            groupConfigs: {}
+        });
+        mockAgcDbAccessService.getLatestTopicRecordsByTimeRange.mockResolvedValue([
+            createTopicRecord({
+                topicId: "topic-high",
+                topic: "高分话题",
+                detail: "高分详情",
+                interestScore: 0.9
+            }),
+            createTopicRecord({ topicId: "topic-low", topic: "低分话题", detail: "低分详情", interestScore: 0.1 }),
+            createTopicRecord({
+                topicId: "topic-null",
+                topic: "无分话题",
+                detail: "无分详情",
+                interestScore: null
+            })
+        ]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockAgcDbAccessService,
+            mockReportDbAccessService,
+            mockReportEmailService,
+            mockTextGeneratorService,
+            "half-daily"
+        );
+
+        const report = mockReportDbAccessService.storeReport.mock.calls[0][0] as Report;
+        const topicsData = mockGetReportSummaryPrompt.mock.calls[0][2] as Array<{ topic: string; detail: string }>;
+
+        expect(report.topicIds).toEqual(["topic-high", "topic-low", "topic-null"]);
+        expect(report.statistics.topicCount).toBe(3);
+        expect(topicsData).toEqual([
+            { topic: "高分话题", detail: "高分详情" },
+            { topic: "低分话题", detail: "低分详情" },
+            { topic: "无分话题", detail: "无分详情" }
+        ]);
+        expect(mockGetReportSummaryPrompt).toHaveBeenCalledWith(
+            "half-daily",
+            expect.any(String),
+            expect.arrayContaining([
+                { topic: "高分话题", detail: "高分详情" },
+                { topic: "低分话题", detail: "低分详情" },
+                { topic: "无分话题", detail: "无分详情" }
+            ]),
+            expect.objectContaining({ topicCount: 3 })
+        );
+    });
+
+    it.each(["weekly", "monthly"] as const)("%s 应继续按兴趣阈值过滤并受 topN 限制", async reportType => {
+        mockConfigManagerService.getCurrentConfig.mockResolvedValue({
+            report: {
+                enabled: true,
+                generation: {
+                    topNTopics: 2,
+                    interestScoreThreshold: 0.5,
+                    llmRetryCount: 0,
+                    aiModels: ["mock-model"]
+                }
+            },
+            groupConfigs: {}
+        });
+        mockAgcDbAccessService.getLatestTopicRecordsByTimeRange.mockResolvedValue([
+            createTopicRecord({ topicId: "topic-high", topic: "高分话题", interestScore: 0.9 }),
+            createTopicRecord({ topicId: "topic-mid", topic: "中分话题", interestScore: 0.8 }),
+            createTopicRecord({ topicId: "topic-low", topic: "低分话题", interestScore: 0.1 }),
+            createTopicRecord({ topicId: "topic-null", topic: "无分话题", interestScore: null })
+        ]);
+
+        await runProcessor(
+            mockConfigManagerService,
+            mockAgcDbAccessService,
+            mockReportDbAccessService,
+            mockReportEmailService,
+            mockTextGeneratorService,
+            reportType
+        );
+
+        const report = mockReportDbAccessService.storeReport.mock.calls[0][0] as Report;
+        const topicsData = mockGetReportSummaryPrompt.mock.calls[0][2] as Array<{ topic: string; detail: string }>;
+
+        expect(report.topicIds).toEqual(["topic-high", "topic-mid"]);
+        expect(report.statistics.topicCount).toBe(2);
+        expect(topicsData.map(topic => topic.topic)).toEqual(["高分话题", "中分话题"]);
+        expect(mockGetReportSummaryPrompt).toHaveBeenCalledWith(
+            reportType,
+            expect.any(String),
+            expect.any(Array),
+            expect.objectContaining({ topicCount: 2 })
+        );
+    });
+
     it("已有成功报告时应跳过重复生成", async () => {
         mockReportDbAccessService.getReportByTypeAndExactPeriod.mockResolvedValue(
             createReport({ reportId: "success-report", summaryStatus: "success" })
@@ -268,7 +371,8 @@ async function runProcessor(
     mockAgcDbAccessService: any,
     mockReportDbAccessService: any,
     mockReportEmailService: any,
-    mockTextGeneratorService: any
+    mockTextGeneratorService: any,
+    reportType?: ReportType
 ): Promise<void> {
     const handler = new GenerateReportTaskHandler(
         mockConfigManagerService,
@@ -281,12 +385,13 @@ async function runProcessor(
     await handler.register();
 
     const processor = mockAgendaDefine.mock.calls[0][1] as (job: any) => Promise<void>;
+    const effectiveReportType = reportType ?? "weekly";
 
     await processor({
         attrs: {
             name: "GenerateReport",
             data: {
-                reportType: "weekly",
+                reportType: effectiveReportType,
                 timeStart: 1_000,
                 timeEnd: 2_000
             }
