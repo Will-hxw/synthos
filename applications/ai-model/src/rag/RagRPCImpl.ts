@@ -567,12 +567,10 @@ export class RagRPCImpl implements RAGRPCImplementation {
 
         await this.agentDB.addMessage(userMessage);
 
-        // 3. 获取历史消息
-        const historyMessages = await this.agentDB.getMessagesByConversationId(conversationId);
-        const chatHistory = historyMessages.slice(0, -1).map(msg => ({
-            role: msg.role as "user" | "assistant" | "system",
-            content: msg.content
-        }));
+        // 注意：对话历史的「事实来源」是 LangGraph checkpointer（以 conversationId 作为 thread_id 持久化），
+        // executeStream 会忽略外部传入的历史。agentDB 仅作为 UI 展示用的消息记录，二者各自独立写入。
+        // 因此这里不再从 agentDB 读取历史去拼 chatHistory（既是无效输入、又会误导为 agentDB 驱动上下文），
+        // 仅传空数组以兼容 executeStream 的位置参数。
 
         // 4. 构建系统提示词（只暴露启用的工具，避免模型乱用/误用）
         const effectiveEnabledTools = input.enabledTools || ["rag_search", "sql_query"];
@@ -599,7 +597,7 @@ export class RagRPCImpl implements RAGRPCImplementation {
                 maxTokens: input.maxTokens,
                 abortSignal: options.abortSignal
             },
-            chatHistory,
+            [], // 历史由 checkpointer 维护，executeStream 会忽略该参数
             systemPrompt
         );
 
