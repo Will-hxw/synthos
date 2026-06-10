@@ -50,6 +50,35 @@ function formatExecError(err) {
     return detail;
 }
 
+function getPackageScript(cwd, name, scriptName) {
+    const packageJsonPath = path.join(cwd, "package.json");
+
+    if (!fs.existsSync(packageJsonPath)) {
+        return null;
+    }
+
+    try {
+        const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+        const script = packageJson?.scripts?.[scriptName];
+
+        return typeof script === "string" && script.trim() ? script : null;
+    } catch (err) {
+        debugLog(name, `skip ${scriptName}: package.json parse failed: ${formatExecError(err)}`);
+        return null;
+    }
+}
+
+function runPackageScriptIfPresent(cwd, name, scriptName) {
+    const script = getPackageScript(cwd, name, scriptName);
+
+    if (!script) {
+        return;
+    }
+
+    log(name, `postbuild: ${scriptName}`);
+    execSync(`pnpm -s run ${scriptName}`, { cwd, stdio: "inherit" });
+}
+
 function killTreeWin(pid, name) {
     // Avoid taskkill: some systems have required services disabled.
     // Recursively kill child processes, then the parent.
@@ -675,6 +704,7 @@ async function main() {
             if (oldPid) await killTree(oldPid, name);
             updateProcessLock(lockFilePath, { childPid: null });
             runBuild(cwd, name);
+            runPackageScriptIfPresent(cwd, name, "copy:assets");
             const portCheck = await killByPorts(args.killPorts, name);
             if (portCheck && portCheck.ok === false) {
                 throw new Error(`Ports still busy after cleanup: ${portCheck.busy || ""}`);
