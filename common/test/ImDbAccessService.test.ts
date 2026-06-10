@@ -34,6 +34,72 @@ describe("ImDbAccessService", () => {
         return String(sql).split("?").length - 1;
     }
 
+    it("重复写入原始消息时应补齐引用元数据", async () => {
+        const service = new ImDbAccessService();
+        const message = {
+            msgId: "msg-1",
+            messageContent: "正文",
+            groupId: "group-a",
+            timestamp: 1000,
+            senderId: "sender-a",
+            senderGroupNickname: "发送者",
+            senderNickname: "发送者",
+            quotedMsgId: "quoted-msg-1",
+            quotedMsgContent: "引用正文"
+        };
+
+        await initService(service);
+        await service.storeRawChatMessage(message);
+
+        const singleInsertSql = String(mockCommonDBService.run.mock.calls[1][0]);
+        const singleInsertParams = mockCommonDBService.run.mock.calls[1][1];
+
+        expect(singleInsertSql).toContain("ON CONFLICT(msgId) DO UPDATE SET");
+        expect(singleInsertSql).toContain(
+            "quotedMsgId = COALESCE(excluded.quotedMsgId, chat_messages.quotedMsgId)"
+        );
+        expect(singleInsertSql).toContain(
+            "quotedMsgContent = COALESCE(excluded.quotedMsgContent, chat_messages.quotedMsgContent)"
+        );
+        expect(singleInsertParams.slice(7, 9)).toEqual(["quoted-msg-1", "引用正文"]);
+
+        mockCommonDBService.run.mockClear();
+
+        await service.storeRawChatMessages([message]);
+
+        const batchInsertSql = String(mockCommonDBService.run.mock.calls[1][0]);
+        const batchInsertParams = mockCommonDBService.run.mock.calls[1][1];
+
+        expect(batchInsertSql).toContain("ON CONFLICT(msgId) DO UPDATE SET");
+        expect(batchInsertSql).toContain(
+            "quotedMsgId = COALESCE(excluded.quotedMsgId, chat_messages.quotedMsgId)"
+        );
+        expect(batchInsertSql).toContain(
+            "quotedMsgContent = COALESCE(excluded.quotedMsgContent, chat_messages.quotedMsgContent)"
+        );
+        expect(batchInsertParams.slice(7, 9)).toEqual(["quoted-msg-1", "引用正文"]);
+    });
+
+    it("应查询引用目标不可用的原始消息", async () => {
+        mockCommonDBService.all.mockResolvedValue([{ msgId: "reply-msg" }]);
+        const service = new ImDbAccessService();
+
+        await initService(service);
+        const result = await service.getRawChatMessageIdsWithUnavailableQuotedMessages([
+            "reply-msg",
+            "normal-msg"
+        ]);
+
+        const sql = String(mockCommonDBService.all.mock.calls[0][0]);
+        const params = mockCommonDBService.all.mock.calls[0][1];
+
+        expect(sql).toContain("LEFT JOIN chat_messages quoted ON quoted.msgId = cm.quotedMsgId");
+        expect(sql).toContain("cm.quotedMsgId IS NOT NULL");
+        expect(sql).toContain("quoted.msgId IS NULL");
+        expect(params).toEqual(["reply-msg", "normal-msg"]);
+        expect(result).toEqual(new Set(["reply-msg"]));
+    });
+
     it("根据不存在的消息id查询raw消息时应抛错", async () => {
         mockCommonDBService.get.mockResolvedValue(undefined);
         const service = new ImDbAccessService();

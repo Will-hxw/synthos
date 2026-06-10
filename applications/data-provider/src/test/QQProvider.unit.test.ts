@@ -1280,6 +1280,7 @@ describe("QQProvider", () => {
             });
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockResolvedValueOnce({ quotedMsgId: "real-quoted-msg-id" });
             mockParserMethods.parseMessageSegment
                 .mockReturnValueOnce({
                     extraMessage: {
@@ -1463,6 +1464,7 @@ describe("QQProvider", () => {
             });
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockResolvedValueOnce({ quotedMsgId: "real-quoted-msg-id" });
             mockParserMethods.parseMessageSegment
                 .mockReturnValueOnce({
                     extraMessage: {
@@ -1488,7 +1490,11 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].quotedMsgId).toBe("123");
+            expect(result[0].quotedMsgId).toBe("real-quoted-msg-id");
+            expect(mockDbMethods.get).toHaveBeenCalledWith(expect.stringContaining(`"${GMC.msgSeq}" = ?`), [
+                Number(mockGroupId),
+                123
+            ]);
             expect(result[0].quotedMsgContent).toBe("被引用内容");
             expect(result[0].messageContent).toBe("回复正文");
         });
@@ -1641,6 +1647,7 @@ describe("QQProvider", () => {
             };
 
             mockDbMethods.all.mockResolvedValueOnce([mockRow]);
+            mockDbMethods.get.mockResolvedValueOnce({ quotedMsgId: "real-quoted-msg-id" });
 
             // 根据调用顺序返回不同结果：
             // 第一次调用（处理 extraData）返回引用消息内容
@@ -1671,7 +1678,7 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].quotedMsgId).toBe("123");
+            expect(result[0].quotedMsgId).toBe("real-quoted-msg-id");
             expect(result[0].quotedMsgContent).toBe(quotedMsgContent);
             expect(result[0].messageContent).toBe("回复消息");
         });

@@ -43,6 +43,7 @@ interface QQMessageParseStats {
     skippedExcludedMsgTypeCount: number;
     skippedEmptyQuotedContentCount: number;
     skippedInvalidQuotedProtobufCount: number;
+    unresolvedQuotedMsgIdCount: number;
     parseFailurePlaceholderCount: number;
     emptyContentPlaceholderCount: number;
     forwardMergedSeenCount: number;
@@ -351,6 +352,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             skippedExcludedMsgTypeCount: 0,
             skippedEmptyQuotedContentCount: 0,
             skippedInvalidQuotedProtobufCount: 0,
+            unresolvedQuotedMsgIdCount: 0,
             parseFailurePlaceholderCount: 0,
             emptyContentPlaceholderCount: 0,
             forwardMergedSeenCount: 0,
@@ -372,6 +374,11 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         if (stats.skippedInvalidQuotedProtobufCount > 0) {
             this.LOGGER.warning(
                 `跳过 ${stats.skippedInvalidQuotedProtobufCount} 条引用消息正文解析失败的消息引用。`
+            );
+        }
+        if (stats.unresolvedQuotedMsgIdCount > 0) {
+            this.LOGGER.warning(
+                `跳过 ${stats.unresolvedQuotedMsgIdCount} 条无法按 groupId + msgSeq 反查原消息 msgId 的消息引用。`
             );
         }
         if (stats.parseFailurePlaceholderCount > 0) {
@@ -1275,10 +1282,40 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         return String(value);
     }
 
-    private _normalizeQuotedMsgId(value: unknown): string {
-        const msgId = this._stringifyNullable(value).trim();
+    private _normalizeReplyMsgSeq(value: unknown): string {
+        const msgSeq = this._stringifyNullable(value).trim();
 
-        return msgId && msgId !== "0" ? msgId : "";
+        return msgSeq && msgSeq !== "0" ? msgSeq : "";
+    }
+
+    private async _resolveQuotedMsgIdByReplyMsgSeq(
+        groupId: string,
+        replyMsgSeq: string
+    ): Promise<string | undefined> {
+        if (!this.db) {
+            throw ErrorReasons.UNINITIALIZED_ERROR;
+        }
+
+        const groupIdNumber = Number(groupId);
+        const replyMsgSeqNumber = Number(replyMsgSeq);
+
+        if (!Number.isFinite(groupIdNumber) || !Number.isFinite(replyMsgSeqNumber)) {
+            return undefined;
+        }
+
+        const row = (await this.db.get(
+            `
+            SELECT CAST("${GMC.msgId}" AS TEXT) AS quotedMsgId
+            FROM group_msg_table INDEXED BY group_msg_table_idx40027_40003
+            WHERE ${await this._getPatchSQL()}
+              AND "${GMC.peeruin}" = ?
+              AND "${GMC.msgSeq}" = ?
+            LIMIT 1
+            `,
+            [groupIdNumber, replyMsgSeqNumber]
+        )) as { quotedMsgId?: string } | undefined;
+
+        return row?.quotedMsgId ? String(row.quotedMsgId) : undefined;
     }
 
     private _joinReasons(reasons: string[]): string {
@@ -1320,12 +1357,18 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
 
         if (msgType === MsgType.REPLY) {
             this.LOGGER.debug("这是一条引用消息。");
-            const quotedMsgId = this._normalizeQuotedMsgId(result[GMC.replyMsgSeq]);
+            const replyMsgSeq = this._normalizeReplyMsgSeq(result[GMC.replyMsgSeq]);
 
-            ASSERT_NOT_FATAL(!!quotedMsgId, "MsgType 为 REPLY 时，对应的 replyMsgSeq 应该也是有效的。");
+            ASSERT_NOT_FATAL(!!replyMsgSeq, "MsgType 为 REPLY 时，对应的 replyMsgSeq 应该也是有效的。");
 
-            if (quotedMsgId) {
-                processedMsg.quotedMsgId = quotedMsgId;
+            if (replyMsgSeq) {
+                const quotedMsgId = await this._resolveQuotedMsgIdByReplyMsgSeq(processedMsg.groupId, replyMsgSeq);
+
+                if (quotedMsgId) {
+                    processedMsg.quotedMsgId = quotedMsgId;
+                } else {
+                    stats.unresolvedQuotedMsgIdCount++;
+                }
             }
 
             try {

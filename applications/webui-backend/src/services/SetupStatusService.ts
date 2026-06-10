@@ -221,6 +221,7 @@ export class SetupStatusService {
             typeof candidate.scannedCount === "number" &&
             typeof candidate.missingCount === "number" &&
             typeof candidate.insertedCount === "number" &&
+            (candidate.quoteRepairCount === undefined || typeof candidate.quoteRepairCount === "number") &&
             typeof candidate.reachedEnd === "boolean" &&
             typeof candidate.batchSize === "number" &&
             typeof candidate.updatedAt === "number"

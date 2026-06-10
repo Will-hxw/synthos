@@ -12,6 +12,7 @@ export interface QQSourceReconcileStatus {
     scannedCount: number;
     missingCount: number;
     insertedCount: number;
+    quoteRepairCount?: number;
     reachedEnd: boolean;
     wrapped: boolean;
     batchSize: number;
