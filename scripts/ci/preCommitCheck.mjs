@@ -68,6 +68,12 @@ function getUnstagedFiles() {
 }
 
 // 检查是否涉及测试文件
+function findFormattedFilesWithUnstagedChanges(stagedFormatFiles, unstagedFiles) {
+    const unstagedSet = new Set(unstagedFiles.map(normalizeRepoPath));
+
+    return stagedFormatFiles.filter(file => unstagedSet.has(normalizeRepoPath(file)));
+}
+
 function hasTestFiles(files) {
     return files.some(file => file.includes(".test.") || file.includes(".spec.") || file.includes("/test/"));
 }
@@ -135,6 +141,21 @@ function main() {
         return 0;
     }
 
+    const filesToFormat = stagedFiles.filter(file => {
+        const ext = file.split(".").pop().toLowerCase();
+        return ["js", "ts", "tsx", "jsx", "css", "scss", "html"].includes(ext);
+    });
+
+    const filesWithUnstagedChanges = findFormattedFilesWithUnstagedChanges(filesToFormat, getUnstagedFiles());
+    if (filesWithUnstagedChanges.length > 0) {
+        console.error("\nPre-commit 检查失败：以下文件同时存在 staged 和 unstaged 改动。");
+        console.error("为避免格式化后把未暂存改动一起提交，请先全部暂存、拆分提交，或临时 stash 未暂存内容：");
+        for (const file of filesWithUnstagedChanges) {
+            console.error(`  - ${file}`);
+        }
+        return 1;
+    }
+
     let hasError = false;
 
     // 步骤 1: 构建 common
@@ -188,12 +209,6 @@ function main() {
 
     // 步骤 4: 对变更文件执行 eslint --fix 和 prettier --write 格式化代码（仅限初始的 staged 文件）
     console.log("\n格式化代码...");
-
-    // 仅处理初始的 staged 文件（不会包含工作区未暂存的修改）
-    const filesToFormat = stagedFiles.filter(file => {
-        const ext = file.split(".").pop().toLowerCase();
-        return ["js", "ts", "tsx", "jsx", "css", "scss", "html"].includes(ext);
-    });
 
     // 过滤出需要 eslint 处理的文件
     const filesToEslint = filesToFormat.filter(file => {

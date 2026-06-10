@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
 const { spawn } = require("child_process");
-const { writeFileSync } = require("fs");
+const { existsSync, writeFileSync } = require("fs");
 const http = require("http");
 const net = require("net");
+const path = require("path");
 
 const TARGET_PORT = Number(process.env.SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT || "3011");
 const TARGET_HOST = process.env.SYNTHOS_PUBLIC_TUNNEL_TARGET_HOST || "127.0.0.1";
 const READY_FILE = process.env.SYNTHOS_PUBLIC_TUNNEL_READY_FILE || "";
+const ROOT_DIR = path.resolve(__dirname, "..");
 const NGROK_INSPECTOR_TUNNELS_URL = "http://127.0.0.1:4040/api/tunnels";
 const START_TIMEOUT_MS = 60 * 1000;
 const INSPECTOR_TIMEOUT_MS = 3000;
@@ -54,16 +56,49 @@ function parseNgrokLogLine(line) {
     }
 }
 
-function startNgrok() {
-    const args = [
-        "http",
-        String(TARGET_PORT),
-        "--log=stdout",
-        "--log-format=json",
-        "--log-level=info"
+function formatNgrokTargetAddr(targetHost = TARGET_HOST, targetPort = TARGET_PORT) {
+    const normalizedHost = String(targetHost || "").trim();
+
+    if (!normalizedHost) {
+        return String(targetPort);
+    }
+
+    if (normalizedHost.includes(":") && !normalizedHost.startsWith("[")) {
+        return `[${normalizedHost}]:${targetPort}`;
+    }
+
+    return `${normalizedHost}:${targetPort}`;
+}
+
+function resolveNgrokCommand(options = {}) {
+    const rootDir = options.rootDir || ROOT_DIR;
+    const platform = options.platform || process.platform;
+    const fileExists = options.existsSync || existsSync;
+    const envBin = String(options.envBin || process.env.SYNTHOS_NGROK_BIN || "").trim();
+
+    if (envBin) {
+        return envBin;
+    }
+
+    const binaryName = platform === "win32" ? "ngrok.exe" : "ngrok";
+    const candidates = [
+        path.join(rootDir, "node_modules", "ngrok", "bin", binaryName),
+        path.join(rootDir, "applications", "webui-forwarder", "node_modules", "ngrok", "bin", binaryName)
     ];
 
-    return spawn("ngrok", args, {
+    for (const candidate of candidates) {
+        if (fileExists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return "ngrok";
+}
+
+function startNgrok() {
+    const args = ["http", formatNgrokTargetAddr(), "--log=stdout", "--log-format=json", "--log-level=info"];
+
+    return spawn(resolveNgrokCommand(), args, {
         env: createNgrokEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true
@@ -91,7 +126,12 @@ function normalizeHost(host) {
         .trim()
         .toLowerCase();
 
-    if (normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1" || normalized === "[::1]") {
+    if (
+        normalized === "localhost" ||
+        normalized === "127.0.0.1" ||
+        normalized === "::1" ||
+        normalized === "[::1]"
+    ) {
         return "localhost";
     }
 
@@ -438,7 +478,9 @@ if (require.main === module) {
 module.exports = {
     findReusableTunnel,
     findReusableTunnelAfterEndpointConflict,
+    formatNgrokTargetAddr,
     isMatchingTunnelAddr,
     isNgrokEndpointConflict,
-    normalizeTunnelAddr
+    normalizeTunnelAddr,
+    resolveNgrokCommand
 };

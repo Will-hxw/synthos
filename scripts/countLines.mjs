@@ -7,9 +7,33 @@ import { fileURLToPath } from "url";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, "..");
 
-const DIR_IGNORE_SET = new Set(["node_modules", "dist", "assets", "logs", ".idea", ".vscode", ".git"]);
+const DIR_IGNORE_SET = new Set([
+    "node_modules",
+    "dist",
+    "assets",
+    "logs",
+    ".idea",
+    ".vscode",
+    ".git",
+    ".claude",
+    ".codex-run-logs",
+    ".dev-runner-locks",
+    ".playwright-mcp",
+    ".VSCodeCounter",
+    "data"
+]);
 
-const FILE_NAME_IGNORE = new Set([".DS_Store", ".env.local", "synthos_config.json"]);
+const PATH_PREFIX_IGNORE = ["docker/volumes"];
+
+const FILE_NAME_IGNORE = new Set([
+    ".DS_Store",
+    ".env.local",
+    "bash.exe.stackdump",
+    "hxw.sh",
+    "pids.json",
+    "synthos_config.json",
+    "synthos_config_override.json"
+]);
 
 /**
  * 将路径转为 posix 形式，方便模式匹配
@@ -23,6 +47,10 @@ function toPosix(p) {
  */
 function isIgnored(relPath, isDirectory) {
     const parts = relPath.split("/");
+
+    if (PATH_PREFIX_IGNORE.some(prefix => relPath === prefix || relPath.startsWith(`${prefix}/`))) {
+        return true;
+    }
 
     // 路径级别忽略：若任一片段在忽略目录集合中，直接跳过
     if (parts.some(p => DIR_IGNORE_SET.has(p))) {
