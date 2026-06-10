@@ -19,7 +19,19 @@ const UnixMsSchema = z.preprocess(value => {
             return value;
         }
 
-        return parseInt(trimmed, 10);
+        // 拒绝包含非数字字符的字符串，避免 "1700000000000abc" 被 parseInt 静默接受
+        if (!/^\d+$/.test(trimmed)) {
+            return value;
+        }
+
+        const parsed = Number(trimmed);
+
+        // 避免超大数值变成 Infinity
+        if (!Number.isFinite(parsed)) {
+            return value;
+        }
+
+        return parsed;
     }
 
     return value;
@@ -52,11 +64,16 @@ export const GetChatMessagesByGroupIdSchema = z
     });
 export type GetChatMessagesByGroupIdParams = z.infer<typeof GetChatMessagesByGroupIdSchema>;
 
-export const GetSessionIdsByGroupIdsAndTimeRangeSchema = z.object({
-    groupIds: z.array(z.string(), { message: "缺少必要的参数: groupIds" }),
-    timeStart: UnixMsSchema,
-    timeEnd: UnixMsSchema
-});
+export const GetSessionIdsByGroupIdsAndTimeRangeSchema = z
+    .object({
+        groupIds: z.array(z.string(), { message: "缺少必要的参数: groupIds" }),
+        timeStart: UnixMsSchema,
+        timeEnd: UnixMsSchema
+    })
+    .refine(params => params.timeEnd >= params.timeStart, {
+        message: "timeEnd必须大于等于timeStart",
+        path: ["timeEnd"]
+    });
 export type GetSessionIdsByGroupIdsAndTimeRangeParams = z.infer<typeof GetSessionIdsByGroupIdsAndTimeRangeSchema>;
 
 export const GetSessionTimeDurationsSchema = z.object({
@@ -69,14 +86,28 @@ export const GetMessageHourlyStatsSchema = z.object({
 });
 export type GetMessageHourlyStatsParams = z.infer<typeof GetMessageHourlyStatsSchema>;
 
-export const ChatMessageFtsSearchSchema = z.object({
-    query: z.string({ message: "缺少query参数" }).min(1, "query不能为空"),
-    groupIds: z.array(z.string()).optional(),
-    timeStart: UnixMsSchema.optional(),
-    timeEnd: UnixMsSchema.optional(),
-    page: z.number({ message: "缺少page参数" }).int().positive(),
-    pageSize: z.number({ message: "缺少pageSize参数" }).int().positive().max(100)
-});
+export const ChatMessageFtsSearchSchema = z
+    .object({
+        query: z.string({ message: "缺少query参数" }).min(1, "query不能为空"),
+        groupIds: z.array(z.string()).optional(),
+        timeStart: UnixMsSchema.optional(),
+        timeEnd: UnixMsSchema.optional(),
+        page: z.number({ message: "缺少page参数" }).int().positive(),
+        pageSize: z.number({ message: "缺少pageSize参数" }).int().positive().max(100)
+    })
+    .refine(
+        params => {
+            if (params.timeStart !== undefined && params.timeEnd !== undefined) {
+                return params.timeEnd >= params.timeStart;
+            }
+
+            return true;
+        },
+        {
+            message: "timeEnd必须大于等于timeStart",
+            path: ["timeEnd"]
+        }
+    );
 export type ChatMessageFtsSearchParams = z.infer<typeof ChatMessageFtsSearchSchema>;
 
 export const ChatMessageFtsContextSchema = z.object({
@@ -244,15 +275,27 @@ export const GetReportsPaginatedSchema = z.object({
 export type GetReportsPaginatedParams = z.infer<typeof GetReportsPaginatedSchema>;
 
 export const GetReportsByDateSchema = z.object({
-    date: z.union([z.string(), z.number()], { message: "缺少date参数" })
+    date: z.union([z.string(), z.number()], { message: "缺少date参数" }).refine(
+        val => {
+            const d = new Date(val);
+
+            return !Number.isNaN(d.getTime());
+        },
+        { message: "date 无法解析为有效日期" }
+    )
 });
 export type GetReportsByDateParams = z.infer<typeof GetReportsByDateSchema>;
 
-export const GetReportsByTimeRangeSchema = z.object({
-    timeStart: z.number({ message: "缺少timeStart参数" }),
-    timeEnd: z.number({ message: "缺少timeEnd参数" }),
-    type: z.enum(["half-daily", "weekly", "monthly"]).optional()
-});
+export const GetReportsByTimeRangeSchema = z
+    .object({
+        timeStart: z.number({ message: "缺少timeStart参数" }),
+        timeEnd: z.number({ message: "缺少timeEnd参数" }),
+        type: z.enum(["half-daily", "weekly", "monthly"]).optional()
+    })
+    .refine(params => params.timeEnd >= params.timeStart, {
+        message: "timeEnd必须大于等于timeStart",
+        path: ["timeEnd"]
+    });
 export type GetReportsByTimeRangeParams = z.infer<typeof GetReportsByTimeRangeSchema>;
 
 export const GetRecentReportsSchema = z.object({
@@ -261,11 +304,25 @@ export const GetRecentReportsSchema = z.object({
 });
 export type GetRecentReportsParams = z.infer<typeof GetRecentReportsSchema>;
 
-export const TriggerReportGenerateSchema = z.object({
-    type: z.enum(["half-daily", "weekly", "monthly"], { message: "缺少type参数" }),
-    timeStart: z.number().optional(),
-    timeEnd: z.number().optional()
-});
+export const TriggerReportGenerateSchema = z
+    .object({
+        type: z.enum(["half-daily", "weekly", "monthly"], { message: "缺少type参数" }),
+        timeStart: z.number().optional(),
+        timeEnd: z.number().optional()
+    })
+    .refine(
+        params => {
+            if (params.timeStart !== undefined && params.timeEnd !== undefined) {
+                return params.timeEnd >= params.timeStart;
+            }
+
+            return true;
+        },
+        {
+            message: "timeEnd必须大于等于timeStart",
+            path: ["timeEnd"]
+        }
+    );
 export type TriggerReportGenerateParams = z.infer<typeof TriggerReportGenerateSchema>;
 
 // 日报已读状态

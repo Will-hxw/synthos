@@ -38,7 +38,7 @@ export class RagChatHistoryController {
         const session = await this.ragChatHistoryService.getSessionById(params.sessionId);
 
         if (!session) {
-            res.json({ success: false, message: "会话不存在" });
+            res.status(404).json({ success: false, message: "会话不存在" });
 
             return;
         }
@@ -52,7 +52,14 @@ export class RagChatHistoryController {
     async deleteSession(req: Request, res: Response): Promise<void> {
         const params = RagSessionIdSchema.parse(req.body);
 
-        await this.ragChatHistoryService.deleteSession(params.sessionId);
+        const deleted = await this.ragChatHistoryService.deleteSession(params.sessionId);
+
+        if (!deleted) {
+            res.status(404).json({ success: false, message: "会话不存在" });
+
+            return;
+        }
+
         res.json({ success: true, message: "会话已删除" });
     }
 
@@ -63,7 +70,14 @@ export class RagChatHistoryController {
     async updateSessionTitle(req: Request, res: Response): Promise<void> {
         const params = UpdateRagSessionTitleSchema.parse(req.body);
 
-        await this.ragChatHistoryService.updateSessionTitle(params.sessionId, params.title);
+        const updated = await this.ragChatHistoryService.updateSessionTitle(params.sessionId, params.title);
+
+        if (!updated) {
+            res.status(404).json({ success: false, message: "会话不存在" });
+
+            return;
+        }
+
         res.json({ success: true, message: "标题已更新" });
     }
 
@@ -83,7 +97,14 @@ export class RagChatHistoryController {
     async toggleSessionPin(req: Request, res: Response): Promise<void> {
         const params = ToggleSessionPinSchema.parse(req.body);
 
-        await this.ragChatHistoryService.toggleSessionPin(params.sessionId, params.pinned);
+        const toggled = await this.ragChatHistoryService.toggleSessionPin(params.sessionId, params.pinned);
+
+        if (!toggled) {
+            res.status(404).json({ success: false, message: "会话不存在" });
+
+            return;
+        }
+
         res.json({ success: true, message: params.pinned ? "会话已置顶" : "会话已取消置顶" });
     }
 }

@@ -57,7 +57,7 @@ export class SetupStatusService {
         const configuredGroupIds = Object.keys(config.groupConfigs);
         const [embedding, qqSourceReconcile] = await Promise.all([
             this._getEmbeddingStatus(config.ai.embedding.ollamaBaseURL, config.ai.embedding.model),
-            this._getQQSourceReconcileStatuses(config.webUI_Backend.kvStoreBasePath)
+            this._getQQSourceReconcileStatuses(config.webUI_Backend.kvStoreBasePath, configuredGroupIds)
         ]);
 
         return {
@@ -119,7 +119,10 @@ export class SetupStatusService {
         }
     }
 
-    private async _getQQSourceReconcileStatuses(kvStoreBasePath: string): Promise<QQSourceReconcileStatus[]> {
+    private async _getQQSourceReconcileStatuses(
+        kvStoreBasePath: string,
+        groupIds: string[]
+    ): Promise<QQSourceReconcileStatus[]> {
         const storePath = path.join(kvStoreBasePath, "data-provider", "qq-source-reconcile");
 
         try {
@@ -131,14 +134,10 @@ export class SetupStatusService {
         const store = new KVStore<QQSourceReconcileStatus>(storePath);
 
         try {
-            const keys = await store.keys();
             const statuses: QQSourceReconcileStatus[] = [];
 
-            for (const key of keys) {
-                if (!key.startsWith(`${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:`)) {
-                    continue;
-                }
-
+            for (const groupId of groupIds) {
+                const key = `${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:${groupId}`;
                 const status = await store.get(key);
 
                 if (this._isQQSourceReconcileStatus(status)) {

@@ -54,10 +54,10 @@ export class AgentService {
                 question: request.question,
                 conversationId: request.conversationId,
                 sessionId: request.sessionId,
-                enabledTools: request.enabledTools || ["rag_search", "sql_query"],
-                maxToolRounds: request.maxToolRounds || 5,
-                temperature: request.temperature || 0.7,
-                maxTokens: request.maxTokens || 2048
+                enabledTools: request.enabledTools ?? ["rag_search", "sql_query"],
+                maxToolRounds: request.maxToolRounds ?? 20,
+                temperature: request.temperature ?? 0.7,
+                maxTokens: request.maxTokens ?? 2048
             });
 
             this.LOGGER.info(
@@ -114,10 +114,10 @@ export class AgentService {
                     question: request.question,
                     conversationId,
                     sessionId: request.sessionId,
-                    enabledTools: request.enabledTools || ["rag_search", "sql_query"],
-                    maxToolRounds: request.maxToolRounds || 5,
-                    temperature: request.temperature || 0.7,
-                    maxTokens: request.maxTokens || 2048
+                    enabledTools: request.enabledTools ?? ["rag_search", "sql_query"],
+                    maxToolRounds: request.maxToolRounds ?? 20,
+                    temperature: request.temperature ?? 0.7,
+                    maxTokens: request.maxTokens ?? 2048
                 },
                 {
                     onData: (evt: AgentEvent) => {
