@@ -5,11 +5,11 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter 'applications/*' build",
-    "build:all": "node scripts/launchAll.cjs",
-    "dev": "node scripts/launchAll.cjs",
-    "start": "node scripts/launchAll.cjs",
-    "config": "node scripts/launchConfigPanel.cjs",
+    "build": "pnpm exec tsc --build common/tsconfig.json && pnpm -r --filter \"./applications/**\" build",
+    "build:all": "pnpm run build",
+    "dev": "node scripts/launchDevGroup.cjs --group all",
+    "start": "node scripts/launchDevGroup.cjs --group all",
+    "config": "node scripts/launchDevGroup.cjs --group config",
     "dev:all": "node scripts/launchDevGroup.cjs --group all",
     "dev:backend": "node scripts/launchDevGroup.cjs --group backend",
     "dev:config": "node scripts/launchDevGroup.cjs --group config",
@@ -22,7 +22,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "packageManager": "pnpm@10.15.0",
   "pnpm": {
     "overrides": {

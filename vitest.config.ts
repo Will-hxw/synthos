@@ -10,7 +10,7 @@ export default defineConfig({
         }
     },
     test: {
-        testTimeout: 99999 * 1000,
+        testTimeout: 30 * 1000,
         exclude: [
             "**/node_modules/**",
             "**/dist/**", // ← 排除 dist

@@ -220,6 +220,12 @@ export class RagChatHistoryManager extends Disposable {
     async deleteSession(id: string): Promise<boolean> {
         this.ensureInitialized();
 
+        const exists = await this.getSessionById(id);
+
+        if (!exists) {
+            return false;
+        }
+
         await this.db!.run(`DELETE FROM rag_sessions WHERE id = ?`, [id]);
 
         this.LOGGER.info(`删除会话: ${id}`);
@@ -232,6 +238,12 @@ export class RagChatHistoryManager extends Disposable {
      */
     async updateSessionTitle(id: string, title: string): Promise<boolean> {
         this.ensureInitialized();
+
+        const exists = await this.getSessionById(id);
+
+        if (!exists) {
+            return false;
+        }
 
         const now = Date.now();
 
@@ -257,6 +269,12 @@ export class RagChatHistoryManager extends Disposable {
      */
     async toggleSessionPin(id: string, pinned: boolean): Promise<boolean> {
         this.ensureInitialized();
+
+        const exists = await this.getSessionById(id);
+
+        if (!exists) {
+            return false;
+        }
 
         const now = Date.now();
 

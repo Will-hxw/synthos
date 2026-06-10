@@ -202,9 +202,19 @@ export class ProvideDataTaskHandler {
         const sourceMsgIds = page.messages.map(message => message.msgId);
         const existingMsgIds = await this.imDbAccessService.getExistingRawChatMessageIds(sourceMsgIds);
         const missingMsgIds = sourceMsgIds.filter(msgId => !existingMsgIds.has(msgId));
-        const missingMessages = await provider.getMsgsByMsgIds(missingMsgIds, groupId);
+        const existingPageMsgIds = sourceMsgIds.filter(msgId => existingMsgIds.has(msgId));
+        const quoteRepairMsgIds =
+            await this.imDbAccessService.getRawChatMessageIdsWithUnavailableQuotedMessages(existingPageMsgIds);
+        const rehydrateMsgIds = [...missingMsgIds, ...quoteRepairMsgIds];
+        const rehydratedMessages = await provider.getMsgsByMsgIds(rehydrateMsgIds, groupId);
+        const missingMsgIdSet = new Set(missingMsgIds);
+        const quoteRepairMsgIdSet = new Set(quoteRepairMsgIds);
+        const insertedCount = rehydratedMessages.filter(message => missingMsgIdSet.has(message.msgId)).length;
+        const quoteRepairCount = rehydratedMessages.filter(
+            message => quoteRepairMsgIdSet.has(message.msgId) && !!message.quotedMsgId
+        ).length;
 
-        await this.imDbAccessService.storeRawChatMessages(missingMessages);
+        await this.imDbAccessService.storeRawChatMessages(rehydratedMessages);
         await this._storeNextQQSourceCursor(cursorStore, cursorKey, page);
         await this._storeQQSourceReconcileStatus(cursorStore, {
             groupId,
@@ -212,17 +222,18 @@ export class ProvideDataTaskHandler {
             nextCursor: page.nextCursor,
             scannedCount: sourceMsgIds.length,
             missingCount: missingMsgIds.length,
-            insertedCount: missingMessages.length,
+            insertedCount,
+            quoteRepairCount,
             reachedEnd: page.reachedEnd,
             wrapped: page.wrapped,
             batchSize,
             updatedAt: Date.now()
         });
         this.LOGGER.info(
-            `群 ${groupId} QQ 原库对账扫描 ${sourceMsgIds.length} 条，缺失 ${missingMsgIds.length} 条，补入 ${missingMessages.length} 条。`
+            `群 ${groupId} QQ 原库对账扫描 ${sourceMsgIds.length} 条，缺失 ${missingMsgIds.length} 条，补入 ${insertedCount} 条，修复引用 ${quoteRepairCount} 条。`
         );
 
-        return missingMessages.length;
+        return rehydratedMessages.length;
     }
 
     private async _storeNextQQSourceCursor(

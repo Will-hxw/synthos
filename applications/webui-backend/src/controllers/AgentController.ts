@@ -32,17 +32,36 @@ export class AgentController {
      */
     public async ask(req: Request, res: Response): Promise<void> {
         const params = AgentAskRequestSchema.parse(req.body);
-        const result = await this.agentService.askAgent({
-            question: params.question,
-            conversationId: params.conversationId,
-            sessionId: params.sessionId,
-            enabledTools: params.enabledTools,
-            maxToolRounds: params.maxToolRounds,
-            temperature: params.temperature,
-            maxTokens: params.maxTokens
-        });
 
-        res.json({ success: true, data: result });
+        const conversationId = params.conversationId || randomUUID();
+
+        // 单实例并发拒绝：同 conversationId 不允许并行跑
+        if (!this.agentService.tryAcquireConversationLock(conversationId)) {
+            res.status(409).json({
+                success: false,
+                code: "CONVERSATION_RUNNING",
+                message: "该对话正在运行中，请等待当前请求完成",
+                conversationId
+            });
+
+            return;
+        }
+
+        try {
+            const result = await this.agentService.askAgent({
+                question: params.question,
+                conversationId,
+                sessionId: params.sessionId,
+                enabledTools: params.enabledTools,
+                maxToolRounds: params.maxToolRounds,
+                temperature: params.temperature,
+                maxTokens: params.maxTokens
+            });
+
+            res.json({ success: true, data: result });
+        } finally {
+            this.agentService.releaseConversationLock(conversationId);
+        }
     }
 
     /**

@@ -42,7 +42,8 @@ const {
         mockImDbAccessService: {
             getNewestRawChatMessageByGroupId: vi.fn(),
             storeRawChatMessages: vi.fn().mockResolvedValue(undefined),
-            getExistingRawChatMessageIds: vi.fn()
+            getExistingRawChatMessageIds: vi.fn(),
+            getRawChatMessageIdsWithUnavailableQuotedMessages: vi.fn()
         },
         mockQQProvider: qqProvider,
         mockCursorStore: cursorStore,
@@ -111,6 +112,9 @@ describe("ProvideDataTaskHandler", () => {
         mockImDbAccessService.storeRawChatMessages.mockResolvedValue(undefined);
         mockImDbAccessService.getNewestRawChatMessageByGroupId.mockResolvedValue(null);
         mockImDbAccessService.getExistingRawChatMessageIds.mockResolvedValue(new Set<string>());
+        mockImDbAccessService.getRawChatMessageIdsWithUnavailableQuotedMessages.mockResolvedValue(
+            new Set<string>()
+        );
         mockQQProvider.sourceReconcileProviderType = "QQ";
         mockQQProvider.init.mockResolvedValue(undefined);
         mockQQProvider.dispose.mockResolvedValue(undefined);
@@ -219,6 +223,52 @@ describe("ProvideDataTaskHandler", () => {
             })
         );
         expect(mockCursorStore.del).not.toHaveBeenCalledWith("qq-source-reconcile:group-a");
+    });
+
+    it("历史对账应修复本地已有但引用目标不可用的消息", async () => {
+        const repairedMessage = {
+            ...createRawMessage("existing-reply-msg", "group-a", 9_000),
+            quotedMsgId: "real-quoted-msg"
+        };
+
+        mockQQProvider.getBusinessMsgIdPageAfterCursor.mockResolvedValue({
+            messages: [{ msgId: "existing-reply-msg", timestamp: 9_000 }],
+            nextCursor: {
+                msgId: "existing-reply-msg",
+                timestamp: 9_000
+            },
+            reachedEnd: false,
+            wrapped: false
+        });
+        mockImDbAccessService.getExistingRawChatMessageIds.mockResolvedValue(new Set(["existing-reply-msg"]));
+        mockImDbAccessService.getRawChatMessageIdsWithUnavailableQuotedMessages.mockResolvedValue(
+            new Set(["existing-reply-msg"])
+        );
+        mockQQProvider.getMsgsByMsgIds.mockResolvedValue([repairedMessage]);
+
+        await runProvideDataJob({
+            groupIds: ["group-a"],
+            startTimeStamp: 1_000,
+            endTimeStamp: 30_000
+        });
+
+        expect(mockImDbAccessService.getRawChatMessageIdsWithUnavailableQuotedMessages).toHaveBeenCalledWith([
+            "existing-reply-msg"
+        ]);
+        expect(mockQQProvider.getMsgsByMsgIds).toHaveBeenCalledWith(["existing-reply-msg"], "group-a");
+        expect(mockImDbAccessService.storeRawChatMessages).toHaveBeenNthCalledWith(2, [repairedMessage]);
+        expect(mockCursorStore.put).toHaveBeenCalledWith(
+            `${QQ_SOURCE_RECONCILE_STATUS_PREFIX}:group-a`,
+            expect.objectContaining({
+                groupId: "group-a",
+                scannedCount: 1,
+                missingCount: 0,
+                insertedCount: 0,
+                quoteRepairCount: 1,
+                reachedEnd: false,
+                batchSize: 50000
+            })
+        );
     });
 
     it("历史补漏扫到末尾时应清理游标供下一轮从头扫描", async () => {

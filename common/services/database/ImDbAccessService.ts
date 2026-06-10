@@ -213,7 +213,9 @@ export class ImDbAccessService extends Disposable {
                 `INSERT INTO chat_messages (
                     msgId, messageContent, groupId, timestamp, senderId, senderGroupNickname, senderNickname, quotedMsgId, quotedMsgContent
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(msgId) DO NOTHING`,
+                ON CONFLICT(msgId) DO UPDATE SET
+                    quotedMsgId = COALESCE(excluded.quotedMsgId, chat_messages.quotedMsgId),
+                    quotedMsgContent = COALESCE(excluded.quotedMsgContent, chat_messages.quotedMsgContent)`,
                 [
                     msg.msgId,
                     msg.messageContent,
@@ -248,7 +250,9 @@ export class ImDbAccessService extends Disposable {
             msgId, messageContent, groupId, timestamp, senderId,
             senderGroupNickname, senderNickname, quotedMsgId, quotedMsgContent
         ) VALUES ${Array(batchSize).fill("(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}
-        ON CONFLICT(msgId) DO NOTHING
+        ON CONFLICT(msgId) DO UPDATE SET
+            quotedMsgId = COALESCE(excluded.quotedMsgId, chat_messages.quotedMsgId),
+            quotedMsgContent = COALESCE(excluded.quotedMsgContent, chat_messages.quotedMsgContent)
     `.trim();
 
         // 开始事务
@@ -1040,6 +1044,42 @@ export class ImDbAccessService extends Disposable {
         }
 
         return existingMsgIds;
+    }
+
+    /**
+     * 获取已入库但引用目标当前不可用的原始消息 msgId 集合。
+     * @param msgIds 待检查的消息 ID 列表
+     * @returns quotedMsgId 指向本地不存在消息的消息 ID 集合
+     */
+    public async getRawChatMessageIdsWithUnavailableQuotedMessages(msgIds: string[]): Promise<Set<string>> {
+        const messageIds = new Set<string>();
+
+        if (msgIds.length === 0) {
+            return messageIds;
+        }
+
+        const MAX_SQLITE_PARAMS = 999;
+
+        for (let i = 0; i < msgIds.length; i += MAX_SQLITE_PARAMS) {
+            const batch = msgIds.slice(i, i + MAX_SQLITE_PARAMS);
+            const placeholders = batch.map(() => "?").join(", ");
+            const rows = await this.db.all<{ msgId: string }>(
+                `SELECT cm.msgId
+                 FROM chat_messages cm
+                 LEFT JOIN chat_messages quoted ON quoted.msgId = cm.quotedMsgId
+                 WHERE cm.msgId IN (${placeholders})
+                   AND cm.quotedMsgId IS NOT NULL
+                   AND cm.quotedMsgId <> ''
+                   AND quoted.msgId IS NULL`,
+                batch
+            );
+
+            for (const row of rows) {
+                messageIds.add(row.msgId);
+            }
+        }
+
+        return messageIds;
     }
 
     /**

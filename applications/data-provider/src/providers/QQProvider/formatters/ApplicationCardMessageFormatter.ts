@@ -42,10 +42,28 @@ export function formatApplicationCardMessage(rawContent: string): string {
             return buildBracketedMessage("卡片消息", parts);
         }
 
+        const scalarText = extractJsonScalarText(parsed, normalized);
+
+        if (scalarText) {
+            return buildBracketedMessage("卡片消息", [scalarText]);
+        }
+
         return buildBracketedMessage("卡片消息", ["暂无可读文本"]);
     } catch {
         return formatStructuredMessage("卡片消息", rawContent);
     }
+}
+
+function extractJsonScalarText(value: unknown, fallbackText: string): string {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        return normalizeInlineText(String(value));
+    }
+
+    if (value === null) {
+        return fallbackText;
+    }
+
+    return "";
 }
 
 function formatStructuredMessage(kind: string, rawContent: string): string {

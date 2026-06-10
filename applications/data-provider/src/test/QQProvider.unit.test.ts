@@ -204,6 +204,26 @@ describe("QQProvider", () => {
             expect(execCall![0]).toContain("PRAGMA cipher_page_size = 4096");
             expect(execCall![0]).toContain("PRAGMA kdf_iter = 4000");
         });
+
+        it("初始化时应转义 PRAGMA key 中的单引号", async () => {
+            mockConfigManager.getCurrentConfig.mockResolvedValue({
+                dataProviders: {
+                    QQ: {
+                        ...mockConfig.dataProviders.QQ,
+                        dbKey: "it's-secret"
+                    }
+                }
+            });
+
+            await qqProvider.init();
+
+            const execCall = mockDbMethods.exec.mock.calls.find((call: string[]) =>
+                call[0].includes("PRAGMA key")
+            );
+
+            expect(execCall).toBeDefined();
+            expect(execCall![0]).toContain("PRAGMA key = 'it''s-secret'");
+        });
     });
 
     describe("getMsgByTimeRange", () => {
@@ -436,6 +456,36 @@ describe("QQProvider", () => {
                     originImageMd5: "abcdef1234567890",
                     qqImageText: "图片里的通知"
                 }
+            ]);
+        });
+
+        it("图片消息的 bytes MD5 应转换为十六进制文本", async () => {
+            const mockRow = createMockDbRow();
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.IMAGE,
+                        imageUrlOrigin: "https://example.com/origin.jpg",
+                        picWidth: 640,
+                        picHeight: 480,
+                        picType: 1000,
+                        originImageMd5: Buffer.from([0xab, 0xcd, 0xef]),
+                        imageText: ""
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].messageContent).toContain("MD5：abcdef");
+            expect(result[0].mediaItems).toEqual([
+                expect.objectContaining({
+                    originImageMd5: "abcdef"
+                })
             ]);
         });
 
@@ -928,6 +978,22 @@ describe("QQProvider", () => {
             expect(result[0].messageContent).toBe("[卡片消息，分享标题]");
         });
 
+        it("转发缓存消息媒体 ID 前缀应包含父消息上下文", () => {
+            const parentA = createRawMessageForTest("parent-a", mockGroupId, mockTimestamp);
+            const parentB = createRawMessageForTest("parent-b", mockGroupId, mockTimestamp);
+            const providerInternals = qqProvider as any;
+
+            expect(providerInternals._getStoredMessageMediaIdPrefix({ msgId: "12345" }, parentA, 0)).toBe(
+                "parent-a:forward:0:12345"
+            );
+            expect(providerInternals._getStoredMessageMediaIdPrefix({ msgId: "12345" }, parentB, 0)).toBe(
+                "parent-b:forward:0:12345"
+            );
+            expect(providerInternals._getStoredMessageMediaIdPrefix({ msgId: "0" }, parentA, 1)).toBe(
+                "parent-a:forward:1"
+            );
+        });
+
         it("应展开合并转发中的混合消息并打包为父消息正文", async () => {
             const mockRow = createMockDbRow({
                 [GMC.msgType]: MsgType.FORWARD_MERGED,
@@ -1214,6 +1280,7 @@ describe("QQProvider", () => {
             });
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockResolvedValueOnce({ quotedMsgId: "real-quoted-msg-id" });
             mockParserMethods.parseMessageSegment
                 .mockReturnValueOnce({
                     extraMessage: {
@@ -1397,6 +1464,7 @@ describe("QQProvider", () => {
             });
 
             mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockDbMethods.get.mockResolvedValueOnce({ quotedMsgId: "real-quoted-msg-id" });
             mockParserMethods.parseMessageSegment
                 .mockReturnValueOnce({
                     extraMessage: {
@@ -1422,7 +1490,11 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].quotedMsgId).toBe("123");
+            expect(result[0].quotedMsgId).toBe("real-quoted-msg-id");
+            expect(mockDbMethods.get).toHaveBeenCalledWith(expect.stringContaining(`"${GMC.msgSeq}" = ?`), [
+                Number(mockGroupId),
+                123
+            ]);
             expect(result[0].quotedMsgContent).toBe("被引用内容");
             expect(result[0].messageContent).toBe("回复正文");
         });
@@ -1575,6 +1647,7 @@ describe("QQProvider", () => {
             };
 
             mockDbMethods.all.mockResolvedValueOnce([mockRow]);
+            mockDbMethods.get.mockResolvedValueOnce({ quotedMsgId: "real-quoted-msg-id" });
 
             // 根据调用顺序返回不同结果：
             // 第一次调用（处理 extraData）返回引用消息内容
@@ -1605,7 +1678,7 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
-            expect(result[0].quotedMsgId).toBe("123");
+            expect(result[0].quotedMsgId).toBe("real-quoted-msg-id");
             expect(result[0].quotedMsgContent).toBe(quotedMsgContent);
             expect(result[0].messageContent).toBe("回复消息");
         });
@@ -1833,3 +1906,15 @@ describe("QQProvider", () => {
         });
     });
 });
+
+function createRawMessageForTest(msgId: string, groupId: string, timestamp: number) {
+    return {
+        msgId,
+        messageContent: "父消息",
+        groupId,
+        timestamp,
+        senderId: "sender",
+        senderGroupNickname: "发送者",
+        senderNickname: "发送者"
+    };
+}

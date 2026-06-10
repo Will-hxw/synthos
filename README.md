@@ -434,6 +434,8 @@ docker exec -it synthos-ollama ollama pull bge-m3
 | `VITE_CONFIG_PANEL_MODE` | `false` | 前端配置面板模式 |
 | `DEV_RUNNER_DEBUG` | `0` | 开发运行器调试日志（`1` / `true`） |
 | `SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT` | `3011` | 公网隧道目标端口 |
+| `SYNTHOS_PUBLIC_TUNNEL_TARGET_HOST` | `127.0.0.1` | 公网隧道目标主机 |
+| `SYNTHOS_NGROK_BIN` | - | ngrok 可执行文件路径；未设置时优先使用仓库内依赖，再回退到 `PATH` |
 | `SYNTHOS_PUBLIC_PREVIEW_HOST` | `127.0.0.1` | 静态预览服务主机 |
 | `SYNTHOS_PUBLIC_PREVIEW_PORT` | `3012` | 静态预览服务端口 |
 | `SYNTHOS_WEBUI_BACKEND_HOST` | `127.0.0.1` | 后端服务主机（公网转发用） |

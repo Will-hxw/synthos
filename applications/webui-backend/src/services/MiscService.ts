@@ -7,6 +7,11 @@ import { injectable } from "tsyringe";
 
 type QQAvatarType = "group" | "user";
 
+/** QQ 头像下载超时（毫秒） */
+const QQ_AVATAR_TIMEOUT_MS = 10_000;
+/** QQ 头像响应体最大字节数（1 MiB） */
+const QQ_AVATAR_MAX_SIZE = 1_048_576;
+
 @injectable()
 export class MiscService {
     /**
@@ -45,20 +50,38 @@ export class MiscService {
      */
     private _downloadImage(url: string): Promise<Buffer> {
         return new Promise((resolve, reject) => {
-            https
-                .get(url, res => {
-                    if (res.statusCode !== 200) {
-                        reject(new Error(`HTTP 状态码 ${res.statusCode}`));
+            const req = https.get(url, { timeout: QQ_AVATAR_TIMEOUT_MS }, res => {
+                if (res.statusCode !== 200) {
+                    res.destroy();
+                    reject(new Error(`HTTP 状态码 ${res.statusCode}`));
+
+                    return;
+                }
+
+                const chunks: Buffer[] = [];
+                let totalSize = 0;
+
+                res.on("data", chunk => {
+                    totalSize += chunk.length;
+
+                    if (totalSize > QQ_AVATAR_MAX_SIZE) {
+                        res.destroy();
+                        reject(new Error("响应体超过大小上限"));
 
                         return;
                     }
 
-                    const chunks: Buffer[] = [];
+                    chunks.push(chunk);
+                });
+                res.on("end", () => resolve(Buffer.concat(chunks)));
+            });
 
-                    res.on("data", chunk => chunks.push(chunk));
-                    res.on("end", () => resolve(Buffer.concat(chunks)));
-                })
-                .on("error", reject);
+            req.on("timeout", () => {
+                req.destroy();
+                reject(new Error("请求超时"));
+            });
+
+            req.on("error", reject);
         });
     }
 }

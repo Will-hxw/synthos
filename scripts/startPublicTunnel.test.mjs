@@ -6,9 +6,11 @@ const require = createRequire(import.meta.url);
 const {
     findReusableTunnel,
     findReusableTunnelAfterEndpointConflict,
+    formatNgrokTargetAddr,
     isMatchingTunnelAddr,
     isNgrokEndpointConflict,
-    normalizeTunnelAddr
+    normalizeTunnelAddr,
+    resolveNgrokCommand
 } = require("./startPublicTunnel.cjs");
 
 describe("startPublicTunnel", () => {
@@ -16,6 +18,33 @@ describe("startPublicTunnel", () => {
         expect(isMatchingTunnelAddr("http://localhost:3012", "127.0.0.1", 3012)).toBe(true);
         expect(isMatchingTunnelAddr("127.0.0.1:3012", "localhost", 3012)).toBe(true);
         expect(normalizeTunnelAddr("3012")).toEqual({ host: "localhost", port: 3012 });
+    });
+
+    it("新建 ngrok 隧道时应传入目标主机和端口", () => {
+        expect(formatNgrokTargetAddr("127.0.0.1", 3012)).toBe("127.0.0.1:3012");
+        expect(formatNgrokTargetAddr("localhost", 3011)).toBe("localhost:3011");
+        expect(formatNgrokTargetAddr("::1", 3012)).toBe("[::1]:3012");
+    });
+
+    it("应优先使用显式指定的 ngrok 可执行文件", () => {
+        expect(
+            resolveNgrokCommand({
+                envBin: "D:/tools/ngrok.exe",
+                existsSync: () => false
+            })
+        ).toBe("D:/tools/ngrok.exe");
+    });
+
+    it("应优先使用仓库内的 ngrok 可执行文件", () => {
+        const rootDir = "D:/repo";
+        const expected = "D:\\repo\\node_modules\\ngrok\\bin\\ngrok.exe";
+        const command = resolveNgrokCommand({
+            rootDir,
+            platform: "win32",
+            existsSync: filePath => filePath === expected
+        });
+
+        expect(command).toBe(expected);
     });
 
     it("inspector 不可用时不应阻断后续新建隧道", async () => {

@@ -2,17 +2,20 @@
  * 话题状态服务（收藏、已读）
  */
 import { injectable, inject } from "tsyringe";
+import { AgcDbAccessService } from "@root/common/services/database/AgcDbAccessService";
 
 import { TOKENS } from "../di/tokens";
 import { TopicFavoriteStatusManager } from "../repositories/TopicFavoriteStatusManager";
 import { TopicReadStatusManager } from "../repositories/TopicReadStatusManager";
+import { NotFoundError } from "../errors/AppError";
 
 @injectable()
 export class TopicStatusService {
     constructor(
         @inject(TOKENS.TopicFavoriteStatusManager)
         private favoriteStatusManager: TopicFavoriteStatusManager,
-        @inject(TOKENS.TopicReadStatusManager) private readStatusManager: TopicReadStatusManager
+        @inject(TOKENS.TopicReadStatusManager) private readStatusManager: TopicReadStatusManager,
+        @inject(TOKENS.AgcDbAccessService) private agcDbAccessService: AgcDbAccessService
     ) {}
 
     // ==================== 收藏相关 ====================
@@ -21,6 +24,7 @@ export class TopicStatusService {
      * 标记话题为收藏
      */
     async markAsFavorite(topicId: string): Promise<void> {
+        await this._ensureTopicExists(topicId);
         await this.favoriteStatusManager.markAsFavorite(topicId);
     }
 
@@ -28,6 +32,7 @@ export class TopicStatusService {
      * 从收藏中移除话题
      */
     async removeFromFavorites(topicId: string): Promise<void> {
+        await this._ensureTopicExists(topicId);
         await this.favoriteStatusManager.removeFromFavorites(topicId);
     }
 
@@ -54,6 +59,7 @@ export class TopicStatusService {
      * 标记话题为已读
      */
     async markAsRead(topicId: string): Promise<void> {
+        await this._ensureTopicExists(topicId);
         await this.readStatusManager.markAsRead(topicId);
     }
 
@@ -61,6 +67,7 @@ export class TopicStatusService {
      * 标记话题为未读
      */
     async markAsUnread(topicId: string): Promise<void> {
+        await this._ensureTopicExists(topicId);
         await this.readStatusManager.markAsUnread(topicId);
     }
 
@@ -77,5 +84,18 @@ export class TopicStatusService {
 
     public async getReadTopicIds(): Promise<string[]> {
         return this.readStatusManager.getReadTopicIds();
+    }
+
+    // ==================== 内部方法 ====================
+
+    /**
+     * 检查 topicId 是否存在，不存在则抛 NotFoundError
+     */
+    private async _ensureTopicExists(topicId: string): Promise<void> {
+        const digest = await this.agcDbAccessService.getAIDigestResultByTopicId(topicId);
+
+        if (!digest) {
+            throw new NotFoundError(`未找到对应的话题：${topicId}`);
+        }
     }
 }

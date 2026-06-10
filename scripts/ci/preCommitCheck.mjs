@@ -18,6 +18,20 @@ import { dirname } from "path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, "../..");
+const frontendProjectPath = "applications/webui-frontend";
+const frontendDir = join(rootDir, frontendProjectPath);
+
+function normalizeRepoPath(file) {
+    return file.replaceAll("\\", "/");
+}
+
+function isFrontendFile(file) {
+    return normalizeRepoPath(file).startsWith(`${frontendProjectPath}/`);
+}
+
+function toFrontendRelativePath(file) {
+    return normalizeRepoPath(file).slice(frontendProjectPath.length + 1);
+}
 
 // 获取 staged 的文件列表
 function getStagedFiles() {
@@ -54,6 +68,12 @@ function getUnstagedFiles() {
 }
 
 // 检查是否涉及测试文件
+function findFormattedFilesWithUnstagedChanges(stagedFormatFiles, unstagedFiles) {
+    const unstagedSet = new Set(unstagedFiles.map(normalizeRepoPath));
+
+    return stagedFormatFiles.filter(file => unstagedSet.has(normalizeRepoPath(file)));
+}
+
 function hasTestFiles(files) {
     return files.some(file => file.includes(".test.") || file.includes(".spec.") || file.includes("/test/"));
 }
@@ -78,6 +98,20 @@ function execCommand(command, cwd = rootDir, description) {
         console.error(`✗ ${description} 失败`);
         return false;
     }
+}
+
+function runEslintBatches(files, cwd, descriptionPrefix) {
+    const batchSize = 30;
+    for (let i = 0; i < files.length; i += batchSize) {
+        const batch = files.slice(i, i + batchSize);
+        const command = `pnpm exec eslint --fix ${batch.map(file => `"${file}"`).join(" ")}`;
+
+        if (!execCommand(command, cwd, `${descriptionPrefix} (批 ${Math.floor(i / batchSize) + 1})`)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // 获取所有子项目目录
@@ -105,6 +139,21 @@ function main() {
     if (stagedFiles.length === 0) {
         console.log("没有 staged 的文件，跳过检查");
         return 0;
+    }
+
+    const filesToFormat = stagedFiles.filter(file => {
+        const ext = file.split(".").pop().toLowerCase();
+        return ["js", "ts", "tsx", "jsx", "css", "scss", "html"].includes(ext);
+    });
+
+    const filesWithUnstagedChanges = findFormattedFilesWithUnstagedChanges(filesToFormat, getUnstagedFiles());
+    if (filesWithUnstagedChanges.length > 0) {
+        console.error("\nPre-commit 检查失败：以下文件同时存在 staged 和 unstaged 改动。");
+        console.error("为避免格式化后把未暂存改动一起提交，请先全部暂存、拆分提交，或临时 stash 未暂存内容：");
+        for (const file of filesWithUnstagedChanges) {
+            console.error(`  - ${file}`);
+        }
+        return 1;
     }
 
     let hasError = false;
@@ -161,12 +210,6 @@ function main() {
     // 步骤 4: 对变更文件执行 eslint --fix 和 prettier --write 格式化代码（仅限初始的 staged 文件）
     console.log("\n格式化代码...");
 
-    // 仅处理初始的 staged 文件（不会包含工作区未暂存的修改）
-    const filesToFormat = stagedFiles.filter(file => {
-        const ext = file.split(".").pop().toLowerCase();
-        return ["js", "ts", "tsx", "jsx", "css", "scss", "html"].includes(ext);
-    });
-
     // 过滤出需要 eslint 处理的文件
     const filesToEslint = filesToFormat.filter(file => {
         const ext = file.split(".").pop().toLowerCase();
@@ -177,16 +220,19 @@ function main() {
     if (filesToEslint.length > 0) {
         console.log(`检测到 ${filesToEslint.length} 个需要 eslint 修复的 staged 文件`);
 
-        // 分批处理文件（避免命令行长度限制）
-        const batchSize = 30;
-        for (let i = 0; i < filesToEslint.length; i += batchSize) {
-            const batch = filesToEslint.slice(i, i + batchSize);
-            const command = `npx eslint --fix ${batch.map(file => `"${file}"`).join(" ")}`;
+        const frontendFilesToEslint = filesToEslint.filter(isFrontendFile).map(toFrontendRelativePath);
+        const rootFilesToEslint = filesToEslint.filter(file => !isFrontendFile(file));
 
-            if (!execCommand(command, rootDir, `修复 eslint 问题 (批 ${Math.floor(i / batchSize) + 1})`)) {
-                hasError = true;
-                break;
-            }
+        if (rootFilesToEslint.length > 0 && !runEslintBatches(rootFilesToEslint, rootDir, "修复根 ESLint 问题")) {
+            hasError = true;
+        }
+
+        if (
+            !hasError &&
+            frontendFilesToEslint.length > 0 &&
+            !runEslintBatches(frontendFilesToEslint, frontendDir, "修复前端 ESLint 问题")
+        ) {
+            hasError = true;
         }
     } else {
         console.log("没有需要 eslint 修复的 staged 文件");

@@ -4,7 +4,11 @@
  * @param {string} commit
  * @returns {boolean}
  */
-const isInitCommit = commit => commit.includes("init");
+const isInitCommit = commit => {
+    const normalizedCommit = commit.trim().toLowerCase();
+
+    return normalizedCommit === "init" || normalizedCommit === "initial commit";
+};
 
 /** @type {import("@commitlint/types").UserConfig} */
 export default {

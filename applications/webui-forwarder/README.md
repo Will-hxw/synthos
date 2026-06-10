@@ -19,6 +19,7 @@ WebUI 前后端接口转发服务，用于将本地服务暴露到公网。
 公网访问 WebUI 时优先使用仓库根目录的 `pnpm dev:public-preview`。该命令会先构建前端并通过静态预览服务暴露到 ngrok，避免公网访问 Vite 开发服务器时产生大量源码模块请求。
 
 `pnpm dev:forwarder` 仅用于调试 legacy forwarder，默认转发 WebUI 前端开发服务器 `127.0.0.1:3011`。如需和公网静态预览链路对齐目标端口，可复用 `scripts/startPublicTunnel.cjs` 的环境变量约定：`SYNTHOS_PUBLIC_TUNNEL_TARGET_PORT` 覆盖前端隧道端口，`SYNTHOS_PUBLIC_TUNNEL_TARGET_HOST` 覆盖目标主机。
+如需指定 ngrok 可执行文件，可设置 `SYNTHOS_NGROK_BIN`；未设置时脚本会优先使用仓库内安装的 ngrok，再回退到 `PATH` 中的 `ngrok`。
 
 如果本机 ngrok inspector 已存在指向同一目标主机和端口的隧道，public tunnel 脚本会复用该公网地址，避免重复启动同一 endpoint 时触发 `ERR_NGROK_334`。
 

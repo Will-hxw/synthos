@@ -179,6 +179,12 @@ export class ReportService {
      * 标记日报为已读
      */
     public async markAsRead(reportId: string): Promise<void> {
+        const report = await this.reportDbAccessService.getReportById(reportId);
+
+        if (!report) {
+            throw new NotFoundError("未找到对应的日报");
+        }
+
         await this.readStatusManager.markAsRead(reportId);
     }
 
@@ -211,6 +217,12 @@ export class ReportService {
         this.LOGGER.info(`标记日报为收藏: reportId=${reportId}`);
 
         try {
+            const report = await this.reportDbAccessService.getReportById(reportId);
+
+            if (!report) {
+                throw new NotFoundError("未找到对应的日报");
+            }
+
             const alreadyFavorite = await this.favoriteStatusManager.isReportFavorite(reportId);
 
             if (alreadyFavorite) {
@@ -234,6 +246,12 @@ export class ReportService {
         this.LOGGER.info(`从收藏中移除日报: reportId=${reportId}`);
 
         try {
+            const report = await this.reportDbAccessService.getReportById(reportId);
+
+            if (!report) {
+                throw new NotFoundError("未找到对应的日报");
+            }
+
             const isFavorite = await this.favoriteStatusManager.isReportFavorite(reportId);
 
             if (!isFavorite) {

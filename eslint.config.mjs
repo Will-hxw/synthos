@@ -61,12 +61,17 @@ export default defineConfig([
             parser: tsParser,
             ecmaVersion: 12,
             sourceType: "module",
+
+            parserOptions: {
+                ecmaFeatures: {
+                    jsx: true
+                }
+            }
         },
 
-        settings: {
-        },
+        settings: {},
 
-        files: ["**/*.ts"],
+        files: ["**/*.ts", "**/*.tsx"],
 
         rules: {
             "no-console": "off",

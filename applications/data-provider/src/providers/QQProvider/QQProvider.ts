@@ -43,6 +43,7 @@ interface QQMessageParseStats {
     skippedExcludedMsgTypeCount: number;
     skippedEmptyQuotedContentCount: number;
     skippedInvalidQuotedProtobufCount: number;
+    unresolvedQuotedMsgIdCount: number;
     parseFailurePlaceholderCount: number;
     emptyContentPlaceholderCount: number;
     forwardMergedSeenCount: number;
@@ -84,6 +85,7 @@ interface MediaOwnerInfo {
     msgId: string;
     groupId: string;
     timestamp: number;
+    mediaIdPrefix?: string;
 }
 
 interface QQGroupFileInfo {
@@ -312,7 +314,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         try {
             await db.open(dbPath);
             await db.exec(`
-                PRAGMA key = '${dbKey}';
+                PRAGMA key = ${this._toSQLiteStringLiteral(dbKey)};
                 PRAGMA cipher_page_size = 4096;
                 PRAGMA kdf_iter = 4000;
                 PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
@@ -324,6 +326,10 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             await db.dispose();
             throw error;
         }
+    }
+
+    private _toSQLiteStringLiteral(value: string): string {
+        return `'${value.replaceAll("'", "''")}'`;
     }
 
     private _getTencentFilesRootPath(dbBasePath: string): string {
@@ -346,6 +352,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             skippedExcludedMsgTypeCount: 0,
             skippedEmptyQuotedContentCount: 0,
             skippedInvalidQuotedProtobufCount: 0,
+            unresolvedQuotedMsgIdCount: 0,
             parseFailurePlaceholderCount: 0,
             emptyContentPlaceholderCount: 0,
             forwardMergedSeenCount: 0,
@@ -367,6 +374,11 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         if (stats.skippedInvalidQuotedProtobufCount > 0) {
             this.LOGGER.warning(
                 `跳过 ${stats.skippedInvalidQuotedProtobufCount} 条引用消息正文解析失败的消息引用。`
+            );
+        }
+        if (stats.unresolvedQuotedMsgIdCount > 0) {
+            this.LOGGER.warning(
+                `跳过 ${stats.unresolvedQuotedMsgIdCount} 条无法按 groupId + msgSeq 反查原消息 msgId 的消息引用。`
             );
         }
         if (stats.parseFailurePlaceholderCount > 0) {
@@ -582,7 +594,8 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         const parsedContent = await this._parseMessageContentWithMedia(storedMsg.messages || [], {
             msgId: this._getStoredMessageId(storedMsg, parentMsg, itemIndex),
             groupId: this._getStoredMessageGroupId(storedMsg, parentMsg),
-            timestamp: this._getStoredMessageTimestamp(storedMsg, parentMsg)
+            timestamp: this._getStoredMessageTimestamp(storedMsg, parentMsg),
+            mediaIdPrefix: this._getStoredMessageMediaIdPrefix(storedMsg, parentMsg, itemIndex)
         });
 
         return {
@@ -623,6 +636,20 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
 
         if (msgId && msgId !== "0") {
             return msgId;
+        }
+
+        return `${parentMsg.msgId}:forward:${itemIndex}`;
+    }
+
+    private _getStoredMessageMediaIdPrefix(
+        storedMsg: StoredMsg,
+        parentMsg: RawChatMessage,
+        itemIndex: number
+    ): string {
+        const msgId = this._normalizeInlineText(storedMsg.msgId);
+
+        if (msgId && msgId !== "0") {
+            return `${parentMsg.msgId}:forward:${itemIndex}:${msgId}`;
         }
 
         return `${parentMsg.msgId}:forward:${itemIndex}`;
@@ -749,11 +776,11 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow
         );
         const sourcePath = this._resolveImageSourcePath(element);
-        const originImageMd5 = this._normalizeInlineText(element.originImageMd5);
+        const originImageMd5 = this._normalizeBinaryFingerprint(element.originImageMd5);
         const qqImageText = this._normalizeInlineText(element.imageText);
 
         return {
-            mediaId: `${mediaOwner.msgId}:${elementIndex}`,
+            mediaId: `${mediaOwner.mediaIdPrefix || mediaOwner.msgId}:${elementIndex}`,
             msgId: mediaOwner.msgId,
             groupId: mediaOwner.groupId,
             timestamp: mediaOwner.timestamp,
@@ -806,7 +833,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         const voiceFileInfo = await this._resolveVoiceFileInfo(element);
 
         return {
-            mediaId: `${mediaOwner.msgId}:${elementIndex}`,
+            mediaId: `${mediaOwner.mediaIdPrefix || mediaOwner.msgId}:${elementIndex}`,
             msgId: mediaOwner.msgId,
             groupId: mediaOwner.groupId,
             timestamp: mediaOwner.timestamp,
@@ -906,7 +933,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             parts.push(`尺寸：${element.picWidth}x${element.picHeight}`);
         }
 
-        const md5 = this._normalizeInlineText(element.originImageMd5);
+        const md5 = this._normalizeBinaryFingerprint(element.originImageMd5);
 
         if (md5) {
             parts.push(`MD5：${this._truncateText(md5, 12)}`);
@@ -1235,6 +1262,18 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         return result.trim();
     }
 
+    private _normalizeBinaryFingerprint(value: unknown): string {
+        if (Buffer.isBuffer(value)) {
+            return value.toString("hex");
+        }
+
+        if (value instanceof Uint8Array) {
+            return Buffer.from(value).toString("hex");
+        }
+
+        return this._normalizeInlineText(value);
+    }
+
     private _stringifyNullable(value: unknown): string {
         if (value === null || value === undefined) {
             return "";
@@ -1243,10 +1282,40 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         return String(value);
     }
 
-    private _normalizeQuotedMsgId(value: unknown): string {
-        const msgId = this._stringifyNullable(value).trim();
+    private _normalizeReplyMsgSeq(value: unknown): string {
+        const msgSeq = this._stringifyNullable(value).trim();
 
-        return msgId && msgId !== "0" ? msgId : "";
+        return msgSeq && msgSeq !== "0" ? msgSeq : "";
+    }
+
+    private async _resolveQuotedMsgIdByReplyMsgSeq(
+        groupId: string,
+        replyMsgSeq: string
+    ): Promise<string | undefined> {
+        if (!this.db) {
+            throw ErrorReasons.UNINITIALIZED_ERROR;
+        }
+
+        const groupIdNumber = Number(groupId);
+        const replyMsgSeqNumber = Number(replyMsgSeq);
+
+        if (!Number.isFinite(groupIdNumber) || !Number.isFinite(replyMsgSeqNumber)) {
+            return undefined;
+        }
+
+        const row = (await this.db.get(
+            `
+            SELECT CAST("${GMC.msgId}" AS TEXT) AS quotedMsgId
+            FROM group_msg_table INDEXED BY group_msg_table_idx40027_40003
+            WHERE ${await this._getPatchSQL()}
+              AND "${GMC.peeruin}" = ?
+              AND "${GMC.msgSeq}" = ?
+            LIMIT 1
+            `,
+            [groupIdNumber, replyMsgSeqNumber]
+        )) as { quotedMsgId?: string } | undefined;
+
+        return row?.quotedMsgId ? String(row.quotedMsgId) : undefined;
     }
 
     private _joinReasons(reasons: string[]): string {
@@ -1288,12 +1357,18 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
 
         if (msgType === MsgType.REPLY) {
             this.LOGGER.debug("这是一条引用消息。");
-            const quotedMsgId = this._normalizeQuotedMsgId(result[GMC.replyMsgSeq]);
+            const replyMsgSeq = this._normalizeReplyMsgSeq(result[GMC.replyMsgSeq]);
 
-            ASSERT_NOT_FATAL(!!quotedMsgId, "MsgType 为 REPLY 时，对应的 replyMsgSeq 应该也是有效的。");
+            ASSERT_NOT_FATAL(!!replyMsgSeq, "MsgType 为 REPLY 时，对应的 replyMsgSeq 应该也是有效的。");
 
-            if (quotedMsgId) {
-                processedMsg.quotedMsgId = quotedMsgId;
+            if (replyMsgSeq) {
+                const quotedMsgId = await this._resolveQuotedMsgIdByReplyMsgSeq(processedMsg.groupId, replyMsgSeq);
+
+                if (quotedMsgId) {
+                    processedMsg.quotedMsgId = quotedMsgId;
+                } else {
+                    stats.unresolvedQuotedMsgIdCount++;
+                }
             }
 
             try {
