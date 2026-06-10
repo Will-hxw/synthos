@@ -18,6 +18,20 @@ import { dirname } from "path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, "../..");
+const frontendProjectPath = "applications/webui-frontend";
+const frontendDir = join(rootDir, frontendProjectPath);
+
+function normalizeRepoPath(file) {
+    return file.replaceAll("\\", "/");
+}
+
+function isFrontendFile(file) {
+    return normalizeRepoPath(file).startsWith(`${frontendProjectPath}/`);
+}
+
+function toFrontendRelativePath(file) {
+    return normalizeRepoPath(file).slice(frontendProjectPath.length + 1);
+}
 
 // 获取 staged 的文件列表
 function getStagedFiles() {
@@ -78,6 +92,20 @@ function execCommand(command, cwd = rootDir, description) {
         console.error(`✗ ${description} 失败`);
         return false;
     }
+}
+
+function runEslintBatches(files, cwd, descriptionPrefix) {
+    const batchSize = 30;
+    for (let i = 0; i < files.length; i += batchSize) {
+        const batch = files.slice(i, i + batchSize);
+        const command = `pnpm exec eslint --fix ${batch.map(file => `"${file}"`).join(" ")}`;
+
+        if (!execCommand(command, cwd, `${descriptionPrefix} (批 ${Math.floor(i / batchSize) + 1})`)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // 获取所有子项目目录
@@ -177,16 +205,19 @@ function main() {
     if (filesToEslint.length > 0) {
         console.log(`检测到 ${filesToEslint.length} 个需要 eslint 修复的 staged 文件`);
 
-        // 分批处理文件（避免命令行长度限制）
-        const batchSize = 30;
-        for (let i = 0; i < filesToEslint.length; i += batchSize) {
-            const batch = filesToEslint.slice(i, i + batchSize);
-            const command = `npx eslint --fix ${batch.map(file => `"${file}"`).join(" ")}`;
+        const frontendFilesToEslint = filesToEslint.filter(isFrontendFile).map(toFrontendRelativePath);
+        const rootFilesToEslint = filesToEslint.filter(file => !isFrontendFile(file));
 
-            if (!execCommand(command, rootDir, `修复 eslint 问题 (批 ${Math.floor(i / batchSize) + 1})`)) {
-                hasError = true;
-                break;
-            }
+        if (rootFilesToEslint.length > 0 && !runEslintBatches(rootFilesToEslint, rootDir, "修复根 ESLint 问题")) {
+            hasError = true;
+        }
+
+        if (
+            !hasError &&
+            frontendFilesToEslint.length > 0 &&
+            !runEslintBatches(frontendFilesToEslint, frontendDir, "修复前端 ESLint 问题")
+        ) {
+            hasError = true;
         }
     } else {
         console.log("没有需要 eslint 修复的 staged 文件");
