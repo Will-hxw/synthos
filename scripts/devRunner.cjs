@@ -437,9 +437,9 @@ async function killByPorts(ports, name) {
 
 function runBuild(cwd, name) {
     const opts = { cwd, stdio: 'inherit' };
-    // Use pnpm to avoid npm env-config warnings when running under pnpm workspaces
-    log(name, 'build: pnpm run build');
-    execSync('pnpm -s run build', opts);
+    // 强制 TypeScript 重写产物，避免损坏的 dist 文件被增量构建保留。
+    log(name, "构建: pnpm exec tsc --build --force");
+    execSync("pnpm -s exec tsc --build --force", opts);
 
     log(name, 'postbuild: redirectRequire');
     execSync('node ../../scripts/redirectRequire.js', opts);
