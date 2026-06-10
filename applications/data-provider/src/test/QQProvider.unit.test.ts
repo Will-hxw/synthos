@@ -978,6 +978,22 @@ describe("QQProvider", () => {
             expect(result[0].messageContent).toBe("[卡片消息，分享标题]");
         });
 
+        it("转发缓存消息媒体 ID 前缀应包含父消息上下文", () => {
+            const parentA = createRawMessageForTest("parent-a", mockGroupId, mockTimestamp);
+            const parentB = createRawMessageForTest("parent-b", mockGroupId, mockTimestamp);
+            const providerInternals = qqProvider as any;
+
+            expect(providerInternals._getStoredMessageMediaIdPrefix({ msgId: "12345" }, parentA, 0)).toBe(
+                "parent-a:forward:0:12345"
+            );
+            expect(providerInternals._getStoredMessageMediaIdPrefix({ msgId: "12345" }, parentB, 0)).toBe(
+                "parent-b:forward:0:12345"
+            );
+            expect(providerInternals._getStoredMessageMediaIdPrefix({ msgId: "0" }, parentA, 1)).toBe(
+                "parent-a:forward:1"
+            );
+        });
+
         it("应展开合并转发中的混合消息并打包为父消息正文", async () => {
             const mockRow = createMockDbRow({
                 [GMC.msgType]: MsgType.FORWARD_MERGED,
@@ -1883,3 +1899,15 @@ describe("QQProvider", () => {
         });
     });
 });
+
+function createRawMessageForTest(msgId: string, groupId: string, timestamp: number) {
+    return {
+        msgId,
+        messageContent: "父消息",
+        groupId,
+        timestamp,
+        senderId: "sender",
+        senderGroupNickname: "发送者",
+        senderNickname: "发送者"
+    };
+}

@@ -84,6 +84,7 @@ interface MediaOwnerInfo {
     msgId: string;
     groupId: string;
     timestamp: number;
+    mediaIdPrefix?: string;
 }
 
 interface QQGroupFileInfo {
@@ -586,7 +587,8 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         const parsedContent = await this._parseMessageContentWithMedia(storedMsg.messages || [], {
             msgId: this._getStoredMessageId(storedMsg, parentMsg, itemIndex),
             groupId: this._getStoredMessageGroupId(storedMsg, parentMsg),
-            timestamp: this._getStoredMessageTimestamp(storedMsg, parentMsg)
+            timestamp: this._getStoredMessageTimestamp(storedMsg, parentMsg),
+            mediaIdPrefix: this._getStoredMessageMediaIdPrefix(storedMsg, parentMsg, itemIndex)
         });
 
         return {
@@ -627,6 +629,20 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
 
         if (msgId && msgId !== "0") {
             return msgId;
+        }
+
+        return `${parentMsg.msgId}:forward:${itemIndex}`;
+    }
+
+    private _getStoredMessageMediaIdPrefix(
+        storedMsg: StoredMsg,
+        parentMsg: RawChatMessage,
+        itemIndex: number
+    ): string {
+        const msgId = this._normalizeInlineText(storedMsg.msgId);
+
+        if (msgId && msgId !== "0") {
+            return `${parentMsg.msgId}:forward:${itemIndex}:${msgId}`;
         }
 
         return `${parentMsg.msgId}:forward:${itemIndex}`;
@@ -757,7 +773,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         const qqImageText = this._normalizeInlineText(element.imageText);
 
         return {
-            mediaId: `${mediaOwner.msgId}:${elementIndex}`,
+            mediaId: `${mediaOwner.mediaIdPrefix || mediaOwner.msgId}:${elementIndex}`,
             msgId: mediaOwner.msgId,
             groupId: mediaOwner.groupId,
             timestamp: mediaOwner.timestamp,
@@ -810,7 +826,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         const voiceFileInfo = await this._resolveVoiceFileInfo(element);
 
         return {
-            mediaId: `${mediaOwner.msgId}:${elementIndex}`,
+            mediaId: `${mediaOwner.mediaIdPrefix || mediaOwner.msgId}:${elementIndex}`,
             msgId: mediaOwner.msgId,
             groupId: mediaOwner.groupId,
             timestamp: mediaOwner.timestamp,
