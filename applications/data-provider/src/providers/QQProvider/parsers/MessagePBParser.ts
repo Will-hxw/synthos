@@ -1,5 +1,7 @@
 // 使用动态导入来确保在不同模块系统下都能正常工作
 import { readFile } from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 
 import ErrorReasons from "@root/common/contracts/ErrorReasons";
 import Logger from "@root/common/util/Logger";
@@ -30,9 +32,14 @@ export class MessagePBParser extends Disposable {
         }
 
         // 1. 加载 .proto 文件
+        const parserDir = path.dirname(fileURLToPath(import.meta.url));
         const pathCandidates = [
-            "./src/providers/QQProvider/parsers/messageSegment.proto",
-            "./applications/data-provider/src/providers/QQProvider/parsers/messageSegment.proto"
+            path.join(parserDir, "messageSegment.proto"),
+            path.resolve(process.cwd(), "src/providers/QQProvider/parsers/messageSegment.proto"),
+            path.resolve(
+                process.cwd(),
+                "applications/data-provider/src/providers/QQProvider/parsers/messageSegment.proto"
+            )
         ];
         let protoContent: string | undefined = undefined;
 
@@ -119,7 +126,7 @@ export class MessagePBParser extends Disposable {
             const plain = this.messageSegment.toObject(message, {
                 longs: String, // 长整数转字符串（可选）
                 enums: String, // 枚举转字符串（可选）
-                bytes: String, // bytes 转 base64 字符串（或保留为 Buffer）
+                bytes: Buffer, // bytes 保留为 Buffer，避免 base64 字符串造成二进制语义偏差
                 defaults: true,
                 arrays: true,
                 objects: true

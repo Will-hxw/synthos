@@ -35,8 +35,12 @@ export class KVStore<T = any> extends Disposable {
     async get(key: string): Promise<T | undefined> {
         try {
             return await this.db.get(key);
-        } catch {
-            return undefined;
+        } catch (error) {
+            if (isLevelNotFoundError(error)) {
+                return undefined;
+            }
+
+            throw error;
         }
     }
 
@@ -64,6 +68,17 @@ export class KVStore<T = any> extends Disposable {
     async batch(ops: Array<{ type: "put"; key: string; value: T } | { type: "del"; key: string }>): Promise<void> {
         await this.db.batch(ops);
     }
+}
+
+function isLevelNotFoundError(error: unknown): boolean {
+    const candidate = error as { code?: unknown; notFound?: unknown; cause?: unknown };
+
+    return (
+        candidate.code === "LEVEL_NOT_FOUND" ||
+        candidate.code === "NOT_FOUND" ||
+        candidate.notFound === true ||
+        (candidate.cause ? isLevelNotFoundError(candidate.cause) : false)
+    );
 }
 
 // example.ts

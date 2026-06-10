@@ -312,7 +312,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         try {
             await db.open(dbPath);
             await db.exec(`
-                PRAGMA key = '${dbKey}';
+                PRAGMA key = ${this._toSQLiteStringLiteral(dbKey)};
                 PRAGMA cipher_page_size = 4096;
                 PRAGMA kdf_iter = 4000;
                 PRAGMA cipher_hmac_algorithm = HMAC_SHA1;
@@ -324,6 +324,10 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             await db.dispose();
             throw error;
         }
+    }
+
+    private _toSQLiteStringLiteral(value: string): string {
+        return `'${value.replaceAll("'", "''")}'`;
     }
 
     private _getTencentFilesRootPath(dbBasePath: string): string {
@@ -749,7 +753,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             element.imageUrlOrigin || element.imageUrlHigh || element.imageUrlLow
         );
         const sourcePath = this._resolveImageSourcePath(element);
-        const originImageMd5 = this._normalizeInlineText(element.originImageMd5);
+        const originImageMd5 = this._normalizeBinaryFingerprint(element.originImageMd5);
         const qqImageText = this._normalizeInlineText(element.imageText);
 
         return {
@@ -906,7 +910,7 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
             parts.push(`尺寸：${element.picWidth}x${element.picHeight}`);
         }
 
-        const md5 = this._normalizeInlineText(element.originImageMd5);
+        const md5 = this._normalizeBinaryFingerprint(element.originImageMd5);
 
         if (md5) {
             parts.push(`MD5：${this._truncateText(md5, 12)}`);
@@ -1233,6 +1237,18 @@ export class QQProvider extends Disposable implements IQQSourceReconcileProvider
         }
 
         return result.trim();
+    }
+
+    private _normalizeBinaryFingerprint(value: unknown): string {
+        if (Buffer.isBuffer(value)) {
+            return value.toString("hex");
+        }
+
+        if (value instanceof Uint8Array) {
+            return Buffer.from(value).toString("hex");
+        }
+
+        return this._normalizeInlineText(value);
     }
 
     private _stringifyNullable(value: unknown): string {

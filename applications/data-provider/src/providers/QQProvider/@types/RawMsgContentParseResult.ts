@@ -39,8 +39,8 @@ export interface MsgElement {
     /** 语音持续时间（秒）(duration = 45906) */
     duration: number;
 
-    /** 音频波形 (waveAmplitudes = 45925) —— 实际为 bytes，JS 中常转为 base64 或 Uint8Array */
-    waveAmplitudes: string;
+    /** 音频波形 (waveAmplitudes = 45925) */
+    waveAmplitudes: Buffer;
 
     // ========== 文件消息 (elementType == 3) ==========
 
@@ -54,13 +54,13 @@ export interface MsgElement {
     fileSize: string;
 
     /** 文件 10MB 分片 MD5 (file10MMD5 = 45407) */
-    file10MMD5: string;
+    file10MMD5: Buffer;
 
     /** 文件 SHA1 (fileSha = 45408) */
-    fileSha: string;
+    fileSha: Buffer;
 
     /** 文件 SHA3 (fileSha3 = 45409) */
-    fileSha3: string;
+    fileSha3: Buffer;
 
     /** 文件唯一标识 (fileUuid = 45503) */
     fileUuid: string;
@@ -83,7 +83,7 @@ export interface MsgElement {
     picHeight: number;
 
     /** 原图 MD5 (originImageMd5 = 45424) */
-    originImageMd5: string;
+    originImageMd5: Buffer;
 
     /** 低清图 URL (imageUrlLow = 45802) */
     imageUrlLow: string;
@@ -118,7 +118,7 @@ export interface MsgElement {
     thumbfilename: string;
 
     /** 封面 MD5 (thumbMD5 = 45862) */
-    thumbMD5: string;
+    thumbMD5: Buffer;
 
     // ========== 表情消息 (elementType == 6 或 11) ==========
 
