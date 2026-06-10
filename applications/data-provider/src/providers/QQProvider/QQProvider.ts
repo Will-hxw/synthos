@@ -1229,6 +1229,20 @@ export class QQProvider extends Disposable implements IIMProvider {
         return result.trim();
     }
 
+    private _stringifyNullable(value: unknown): string {
+        if (value === null || value === undefined) {
+            return "";
+        }
+
+        return String(value);
+    }
+
+    private _normalizeQuotedMsgId(value: unknown): string {
+        const msgId = this._stringifyNullable(value).trim();
+
+        return msgId && msgId !== "0" ? msgId : "";
+    }
+
     private _joinReasons(reasons: string[]): string {
         return reasons
             .map(reason => this._normalizeInlineText(reason))
@@ -1262,16 +1276,19 @@ export class QQProvider extends Disposable implements IIMProvider {
             groupId: String(result[GMC.groupUin] || result[GMC.peeruin]),
             timestamp: result[GMC.msgTime] * 1000,
             senderId: String(result[GMC.senderUin]),
-            senderGroupNickname: result[GMC.sendMemberName],
-            senderNickname: result[GMC.sendNickName]
+            senderGroupNickname: this._stringifyNullable(result[GMC.sendMemberName]),
+            senderNickname: this._stringifyNullable(result[GMC.sendNickName])
         };
 
         if (msgType === MsgType.REPLY) {
             this.LOGGER.debug("这是一条引用消息。");
-            ASSERT_NOT_FATAL(
-                !!result[GMC.replyMsgSeq],
-                "MsgType 为 REPLY 时，对应的 replyMsgSeq 应该也是有效的。"
-            );
+            const quotedMsgId = this._normalizeQuotedMsgId(result[GMC.replyMsgSeq]);
+
+            ASSERT_NOT_FATAL(!!quotedMsgId, "MsgType 为 REPLY 时，对应的 replyMsgSeq 应该也是有效的。");
+
+            if (quotedMsgId) {
+                processedMsg.quotedMsgId = quotedMsgId;
+            }
 
             try {
                 const msgSegment = this.messagePBParser.parseMessageSegment(result[GMC.extraData]);
@@ -1383,12 +1400,22 @@ export class QQProvider extends Disposable implements IIMProvider {
         groupId: string = ""
     ): Promise<RawChatMessage[]> {
         if (this.db) {
-            // 转换为秒级时间戳
-            timeStart = Math.floor(timeStart / 1000);
-            timeEnd = Math.ceil(timeEnd / 1000);
+            if (!Number.isFinite(timeStart) || !Number.isFinite(timeEnd)) {
+                throw ErrorReasons.INVALID_VALUE_ERROR;
+            }
+
+            // 转换为秒级时间戳；QQNT 原库仅存秒级时间，结束边界不额外扩到下一秒。
+            const timeStartSeconds = Math.floor(timeStart / 1000);
+            const timeEndSeconds = Math.floor(timeEnd / 1000);
+            const params: Array<number | string> = [timeStartSeconds, timeEndSeconds];
+
+            if (groupId) {
+                params.push(groupId);
+            }
+
             // 生成SQL语句
             const sql = `
-                SELECT 
+                SELECT
                     CAST("${GMC.msgId}" AS TEXT) AS "${GMC.msgId}",
                     "${GMC.msgTime}",
                     "${GMC.groupUin}",
@@ -1400,15 +1427,16 @@ export class QQProvider extends Disposable implements IIMProvider {
                     "${GMC.sendNickName}",
                     "${GMC.msgType}",
                     "${GMC.extraData}"
-                FROM group_msg_table 
-                WHERE ${await this._getPatchSQL()} 
-                AND ("${GMC.msgTime}" BETWEEN ${timeStart} AND ${timeEnd})
+                FROM group_msg_table
+                WHERE ${await this._getPatchSQL()}
+                AND ("${GMC.msgTime}" BETWEEN ? AND ?)
                 AND "${GMC.msgType}" IN (${RETAINED_QQ_MSG_TYPE_SQL_LIST})
                 ${groupId ? `AND "${GMC.peeruin}" = ?` : ""}
+                ORDER BY "${GMC.msgTime}" ASC, CAST("${GMC.msgId}" AS TEXT) ASC
             `;
 
             this.LOGGER.debug(`执行的SQL: ${sql}`);
-            const results = await this.db.all(sql, groupId ? [groupId] : []);
+            const results = await this.db.all(sql, params);
 
             this.LOGGER.debug(`结果数量: ${results.length}`);
 

@@ -267,9 +267,14 @@ describe("QQProvider", () => {
             await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
+            const paramsCall = mockDbMethods.all.mock.calls[0][1] as unknown[];
 
             expect(sqlCall).toContain("WHERE 1 = 1");
-            expect(sqlCall).toContain('AND ("40050" BETWEEN');
+            expect(sqlCall).toContain('AND ("40050" BETWEEN ? AND ?)');
+            expect(paramsCall).toEqual([
+                Math.floor((mockTimestamp - 1000) / 1000),
+                Math.floor((mockTimestamp + 1000) / 1000)
+            ]);
         });
 
         it("应排除空白、系统提示和未知类型消息", async () => {
@@ -1284,10 +1289,14 @@ describe("QQProvider", () => {
             await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000, mockGroupId);
 
             const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
-            const paramsCall = mockDbMethods.all.mock.calls[0][1] as string[];
+            const paramsCall = mockDbMethods.all.mock.calls[0][1] as unknown[];
 
             expect(sqlCall).toContain(`"${GMC.peeruin}" = ?`);
-            expect(paramsCall).toEqual([mockGroupId]);
+            expect(paramsCall).toEqual([
+                Math.floor((mockTimestamp - 1000) / 1000),
+                Math.floor((mockTimestamp + 1000) / 1000),
+                mockGroupId
+            ]);
         });
 
         it("groupUin 为空时应使用 peeruin 作为群号", async () => {
@@ -1329,10 +1338,93 @@ describe("QQProvider", () => {
 
             await qqProvider.getMsgByTimeRange(timeStartMs, timeEndMs);
 
-            const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
+            const paramsCall = mockDbMethods.all.mock.calls[0][1] as unknown[];
 
-            // 验证开始时间向下取整，结束时间向上取整
-            expect(sqlCall).toContain("BETWEEN 1700000000 AND 1700003601");
+            // 验证开始和结束时间均按秒级向下取整，避免额外纳入下一秒窗口。
+            expect(paramsCall).toEqual([1700000000, 1700003600]);
+        });
+
+        it("时间范围查询应显式排序并使用参数化时间边界", async () => {
+            mockDbMethods.all.mockResolvedValue([]);
+
+            await qqProvider.getMsgByTimeRange(1700000000123, 1700003600456, mockGroupId);
+
+            const sqlCall = mockDbMethods.all.mock.calls[0][0] as string;
+            const paramsCall = mockDbMethods.all.mock.calls[0][1] as unknown[];
+
+            expect(sqlCall).toContain('AND ("40050" BETWEEN ? AND ?)');
+            expect(sqlCall).toContain('ORDER BY "40050" ASC, CAST("40001" AS TEXT) ASC');
+            expect(sqlCall).not.toContain("BETWEEN 1700000000");
+            expect(paramsCall).toEqual([1700000000, 1700003600, mockGroupId]);
+        });
+
+        it("非有限时间戳应抛出 INVALID_VALUE_ERROR，避免生成无效 SQL", async () => {
+            await expect(qqProvider.getMsgByTimeRange(Number.NaN, Number.NaN)).rejects.toBe(
+                ErrorReasons.INVALID_VALUE_ERROR
+            );
+            expect(mockDbMethods.all).not.toHaveBeenCalled();
+        });
+
+        it("原库昵称字段为 null 时应按空字符串输出", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.sendMemberName]: null,
+                [GMC.sendNickName]: null
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment.mockReturnValue({
+                messages: [
+                    {
+                        messageId: "elem_1",
+                        elementType: MsgElementType.TEXT,
+                        messageText: "昵称为空"
+                    }
+                ]
+            });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].senderGroupNickname).toBe("");
+            expect(result[0].senderNickname).toBe("");
+        });
+
+        it("回复消息应使用 replyMsgSeq 回填 quotedMsgId", async () => {
+            const mockRow = createMockDbRow({
+                [GMC.msgType]: MsgType.REPLY,
+                [GMC.replyMsgSeq]: 123,
+                [GMC.extraData]: Buffer.from("mock extra")
+            });
+
+            mockDbMethods.all.mockResolvedValue([mockRow]);
+            mockParserMethods.parseMessageSegment
+                .mockReturnValueOnce({
+                    extraMessage: {
+                        messages: [
+                            {
+                                messageId: "quoted_1",
+                                elementType: MsgElementType.TEXT,
+                                messageText: "被引用内容"
+                            }
+                        ]
+                    }
+                })
+                .mockReturnValueOnce({
+                    messages: [
+                        {
+                            messageId: "reply_1",
+                            elementType: MsgElementType.TEXT,
+                            messageText: "回复正文"
+                        }
+                    ]
+                });
+
+            const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].quotedMsgId).toBe("123");
+            expect(result[0].quotedMsgContent).toBe("被引用内容");
+            expect(result[0].messageContent).toBe("回复正文");
         });
 
         it("应按游标分页读取 QQ 原库业务 msgId", async () => {
@@ -1501,6 +1593,7 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
+            expect(result[0].quotedMsgId).toBe("123");
             expect(result[0].quotedMsgContent).toBe(quotedMsgContent);
             expect(result[0].messageContent).toBe("回复消息");
         });
@@ -1645,6 +1738,7 @@ describe("QQProvider", () => {
             const result = await qqProvider.getMsgByTimeRange(mockTimestamp - 1000, mockTimestamp + 1000);
 
             expect(result).toHaveLength(1);
+            expect(result[0].quotedMsgId).toBeUndefined();
             expect(result[0].messageContent).toBe("回复消息");
         });
 
